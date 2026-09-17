@@ -1,6 +1,6 @@
 # Mise API
 
-Epics 1–9 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture, Handover, Chef Brief, Kitchen Memory Interface. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
+Epics 1–10 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture, Handover, Chef Brief, Kitchen Memory Interface, Operational Email Notifications. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
 
 ## What's built
 
@@ -99,6 +99,16 @@ The service-period question (lunch/dinner/events as a separate `ServicePeriod` v
 - **Full-text search across four surfaces, no new column or index**: `GET /venues/{id}/kitchen-memory/search?q=...` searches `Recipe.name`, `RecipeVersion.prep_notes`, `Supplier.notes`, `EquipmentIssue.resolution_notes`, and `Handover.note` — all scoped to the venue — using Postgres's native `to_tsvector('english', ...)` / `plainto_tsquery('english', ...)` computed inline at query time, consistent with Epic 6's own preference for "the simplest mechanism that's actually correct" over embeddings/ML. No new tsvector column, no new index, no new table — this is genuinely just a set of `WHERE` clauses. A blank/whitespace-only query short-circuits to `[]` before hitting the database. Verified live end to end for all five source fields, including confirming the search stays venue-scoped and a cross-tenant search 403s exactly like every other resource.
 - Reads (recipe list/detail/versions, menu item detail, equipment issue history, search) need any Membership; writes (create recipe, create a new version, link a recipe to a menu item, edit supplier notes) need `MANAGEMENT_ROLES`.
 
+## Epic 10 — Operational Email Notifications
+
+`app/services/email_service.py` (the real pluggable EmailSender interface every earlier epic's docstring pointed at) + `app/services/notification_service.py` (the three chef-facing checks) + real email dispatch wired directly into `roster_service.publish_shift`/`cancel_shift` (staff-facing).
+
+- **One shared email hook for the whole system**: `email_service.send_email(...)` is now the single function everything routes through — `supplier_order_service`'s own `EMAIL_PROVIDER` stub (Epic 5) was refactored to call it instead of fabricating its own message id, and roster publish/cancel notifications (previously an `AuditEvent`-only stand-in — see Epic 2's own docstring) now genuinely send. `EMAIL_SENDER` is a module-level, swappable hook (same "hook, not a hardcoded call" pattern `EMAIL_PROVIDER` already used), a stub that logs and returns a durable message id — no real SMTP/API integration in this backend build.
+- **Staff-facing (locked AC: "limited strictly to their own published/cancelled Shifts and roster-publish notices")**: `publish_shift` emails the assigned Staff member their shift details and signed-link token; `cancel_shift` emails a cancellation notice, but only if the Shift had actually been published — cancelling a still-draft Shift is silent, since the staff member was never told about it in the first place. Both reuse the same `roster.notification_queued` AuditEvent action (differentiated by a `reason` field) and record whether a delivery address was actually on file. **The one schema change this epic needs**: a nullable `Staff.contact_email`, mirroring `Supplier.contact_email` exactly — the only way to reach a Staff member with no login at all; a Staff member WITH a login is instead emailed at their `User.email` (see `roster_service._resolve_staff_email`).
+- **Chef-facing (locked AC: order cut-off approaching, unfilled Shift within 48h, EquipmentIssue open >24h)**: all three reuse an existing computation rather than re-deriving anything — `chef_brief_service.compute_approaching_cutoffs` (Epic 8), `roster_service.compute_coverage_warnings` scanned across the business dates a 48h horizon could touch (Epic 2), and `handover_service.get_open_equipment_issues` filtered by `opened_at` (Epic 7). Recipients are every `MANAGEMENT_ROLES` Membership at the venue. `run_notification_checks(session, *, venue, as_of=None)` is the single entry point a scheduler would call per venue — there is no scheduler/cron in this backend build, so `POST /venues/{id}/notifications/run-checks` (`MANAGEMENT_ROLES`) exposes it as an explicit, manually-triggerable action instead, the same "prove it end to end via a real endpoint before anything automates it" reasoning as Epic 1's `POST .../service-days/start`.
+- **No duplicate notification for the same trigger within the same ServiceDay (locked AC), no new table**: each trigger's own AuditEvent — keyed by `(action, entity_type, entity_id, service_day_id)` — IS the dedup record; a repeat check that finds the identical trigger already logged against the current ServiceDay sends no email and writes nothing. This generalizes Epic 2's own "AuditEvent as the notification record" stand-in and matches Epic 9's preference for the simplest mechanism that's actually correct over new schema. Verified live: running the checks twice in a row against the same venue only ever notifies once per trigger.
+- **Email only** (locked AC) — no SMS/push anywhere in this module or the staff-facing paths it touches.
+
 ## Local setup
 
 ```bash
@@ -115,7 +125,7 @@ Tests run against a **separate** database (`mise_test` by default — see `tests
 
 ```bash
 createdb mise_test   # once, locally — CI does this via the postgres service container
-pytest tests/ -v     # 273 tests
+pytest tests/ -v     # 291 tests
 ```
 
 ## Design notes worth knowing before extending this

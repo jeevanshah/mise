@@ -57,16 +57,19 @@ def create_station(session: Session, *, venue: Venue, actor: User, name: str) ->
 
 
 def create_staff(
-    session: Session, *, venue: Venue, actor: User, name: str, user_id: uuid.UUID | None = None
+    session: Session, *, venue: Venue, actor: User, name: str,
+    user_id: uuid.UUID | None = None, contact_email: str | None = None,
 ) -> Staff:
     """user_id is optional and unrelated to Membership — a Staff record
     tracks an employee on the floor, not a login. Passing one just links an
     existing User account (e.g. the head chef also appears on the roster);
-    it is never required."""
+    it is never required. contact_email (Epic 10) is the only way to reach
+    a Staff member with no user_id at all for roster-publish/cancel
+    notifications — see roster_service._resolve_staff_email."""
     with audited_transaction(
         session, organisation_id=venue.organisation_id, venue_id=venue.id, actor_user_id=actor.id
     ) as audit:
-        staff = Staff(venue_id=venue.id, name=name, user_id=user_id)
+        staff = Staff(venue_id=venue.id, name=name, user_id=user_id, contact_email=contact_email)
         session.add(staff)
         session.flush()
         audit.record(

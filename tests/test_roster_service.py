@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -25,9 +25,32 @@ from app.services.roster_service import (
     respond_to_shift_via_link,
     resolve_staff_link,
 )
+from app.services import email_service
 from app.services.staffing_service import create_coverage_rule, create_staff, create_station
 
 SYDNEY = ZoneInfo("Australia/Sydney")
+
+
+@pytest.fixture(autouse=True)
+def _reset_email_sender():
+    """Every test gets the real default stub sender unless it explicitly
+    monkeypatches email_service.EMAIL_SENDER — reset afterwards so tests
+    never leak a fake sender into each other, same pattern as
+    test_supplier_order_service.py's own EMAIL_PROVIDER fixture."""
+    original = email_service.EMAIL_SENDER
+    yield
+    email_service.EMAIL_SENDER = original
+
+
+def _capture_sent_emails() -> list[email_service.EmailMessage]:
+    sent: list[email_service.EmailMessage] = []
+
+    def fake_sender(message: email_service.EmailMessage) -> email_service.SentEmail:
+        sent.append(message)
+        return email_service.SentEmail(message_id="test-message-id", to=message.to)
+
+    email_service.EMAIL_SENDER = fake_sender
+    return sent
 
 
 def _dt(y, m, d, h, minute=0):
@@ -185,6 +208,106 @@ def test_publish_shift_issues_link_and_queues_notification(session):
     assert link.expires_at > datetime.now(timezone.utc)
     assert session.query(AuditEvent).filter_by(action="shift.published").count() == 1
     assert session.query(AuditEvent).filter_by(action="roster.notification_queued").count() == 1
+
+
+def test_publish_shift_emails_staff_with_contact_email(session):
+    """Epic 10 — a Staff member with no login at all still gets a real
+    (stubbed) email, using their own contact_email."""
+    sent = _capture_sent_emails()
+    owner, venue = _owner_and_venue(session)
+    station = create_station(session, venue=venue, actor=owner, name="Grill")
+    staff = create_staff(
+        session, venue=venue, actor=owner, name="Alex", contact_email="alex@example.com",
+    )
+    shift = create_shift(
+        session, venue=venue, actor=owner, station=station, staff=staff,
+        start_at=_dt(2026, 6, 1, 9), end_at=_dt(2026, 6, 1, 17),
+    )
+
+    publish_shift(session, venue=venue, actor=owner, shift=shift)
+
+    assert [m.to for m in sent] == ["alex@example.com"]
+    event = session.query(AuditEvent).filter_by(action="roster.notification_queued").one()
+    assert event.after_data["sent"] is True
+    assert event.after_data["message_id"] == "test-message-id"
+
+
+def test_publish_shift_emails_staff_with_login_at_their_user_email(session):
+    """A Staff member WITH a login is reached at their User.email, not a
+    separate contact_email field — even if one happens to be set, the
+    login identity wins (it's the address they actually use)."""
+    sent = _capture_sent_emails()
+    owner, venue = _owner_and_venue(session)
+    station = create_station(session, venue=venue, actor=owner, name="Grill")
+    linked_user = User(email="alex-login@example.com")
+    session.add(linked_user)
+    session.commit()
+    staff = create_staff(
+        session, venue=venue, actor=owner, name="Alex", user_id=linked_user.id,
+        contact_email="alex-fallback@example.com",
+    )
+    shift = create_shift(
+        session, venue=venue, actor=owner, station=station, staff=staff,
+        start_at=_dt(2026, 6, 1, 9), end_at=_dt(2026, 6, 1, 17),
+    )
+
+    publish_shift(session, venue=venue, actor=owner, shift=shift)
+
+    assert [m.to for m in sent] == ["alex-login@example.com"]
+
+
+def test_publish_shift_with_no_delivery_address_records_not_sent(session):
+    sent = _capture_sent_emails()
+    owner, venue = _owner_and_venue(session)
+    station = create_station(session, venue=venue, actor=owner, name="Grill")
+    staff = create_staff(session, venue=venue, actor=owner, name="Alex")  # no user_id, no contact_email
+    shift = create_shift(
+        session, venue=venue, actor=owner, station=station, staff=staff,
+        start_at=_dt(2026, 6, 1, 9), end_at=_dt(2026, 6, 1, 17),
+    )
+
+    publish_shift(session, venue=venue, actor=owner, shift=shift)
+
+    assert sent == []
+    event = session.query(AuditEvent).filter_by(action="roster.notification_queued").one()
+    assert event.after_data["sent"] is False
+    assert event.after_data["message_id"] is None
+
+
+def test_cancel_shift_emails_staff_only_if_it_had_been_published(session):
+    sent = _capture_sent_emails()
+    owner, venue = _owner_and_venue(session)
+    station = create_station(session, venue=venue, actor=owner, name="Grill")
+    staff = create_staff(
+        session, venue=venue, actor=owner, name="Alex", contact_email="alex@example.com",
+    )
+    shift = create_shift(
+        session, venue=venue, actor=owner, station=station, staff=staff,
+        start_at=_dt(2026, 6, 1, 9), end_at=_dt(2026, 6, 1, 17),
+    )
+
+    # Cancelling a still-draft shift: staff was never told, so no email.
+    cancel_shift(session, venue=venue, actor=owner, shift=shift)
+    assert sent == []
+    assert session.query(AuditEvent).filter_by(action="roster.notification_queued").count() == 0
+
+    # Publish a fresh shift, then cancel it — NOW it notifies.
+    shift2 = create_shift(
+        session, venue=venue, actor=owner, station=station, staff=staff,
+        start_at=_dt(2026, 6, 2, 9), end_at=_dt(2026, 6, 2, 17),
+    )
+    publish_shift(session, venue=venue, actor=owner, shift=shift2)
+    sent.clear()
+
+    cancel_shift(session, venue=venue, actor=owner, shift=shift2)
+
+    assert [m.to for m in sent] == ["alex@example.com"]
+    notification_events = (
+        session.query(AuditEvent).filter_by(action="roster.notification_queued", entity_id=str(staff.id)).all()
+    )
+    cancelled_events = [e for e in notification_events if e.after_data["reason"] == "shift_cancelled"]
+    assert len(cancelled_events) == 1
+    assert cancelled_events[0].after_data["sent"] is True
 
 
 def test_publish_shift_is_idempotent_no_duplicate_link(session):

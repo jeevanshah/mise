@@ -95,7 +95,10 @@ def create_staff_route(
     venue = _get_venue_or_404(session, venue_id)
     if body.user_id is not None and session.get(User, body.user_id) is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="user_id does not exist")
-    return create_staff(session, venue=venue, actor=current_user, name=body.name, user_id=body.user_id)
+    return create_staff(
+        session, venue=venue, actor=current_user, name=body.name,
+        user_id=body.user_id, contact_email=body.contact_email,
+    )
 
 
 @router.get("/venues/{venue_id}/staff", response_model=list[StaffOut])

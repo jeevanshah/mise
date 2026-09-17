@@ -21,6 +21,7 @@ class StationOut(BaseModel):
 class StaffCreateRequest(BaseModel):
     name: str
     user_id: uuid.UUID | None = None
+    contact_email: str | None = None
 
 
 class StaffOut(BaseModel):
@@ -28,6 +29,7 @@ class StaffOut(BaseModel):
     venue_id: uuid.UUID
     name: str
     user_id: uuid.UUID | None
+    contact_email: str | None = None
 
     model_config = {"from_attributes": True}
 

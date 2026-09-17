@@ -38,6 +38,7 @@ from app.models.station import Station, StationCoverageRule
 from app.models.user import User
 from app.models.venue import Venue
 from app.services.audit_service import audited_transaction
+from app.services.email_service import send_email
 from app.services.service_day_service import get_or_create_service_day, resolve_business_date
 
 # How long a signed staff link is valid for once issued at publish time —
@@ -76,6 +77,21 @@ class CopyWeekConflict(Exception):
     either against a Shift already in the target week, or against another
     Shift in the same copy batch. Nothing from the copy is created; the
     whole operation is validated before anything is written."""
+
+
+def _resolve_staff_email(session: Session, *, staff: Staff) -> str | None:
+    """Epic 10 — the one email address a Staff member can be reached at for
+    roster notifications. A Staff WITH a login (user_id set) is reached at
+    their User.email — their actual identity, always present and unique.
+    A Staff with no login at all falls back to their own contact_email
+    (set at creation for exactly this reason — see Staff's own docstring).
+    Neither present resolves to None: the caller records that no delivery
+    address was on file rather than guessing or failing."""
+    if staff.user_id is not None:
+        user = session.get(User, staff.user_id)
+        if user is not None and user.email:
+            return user.email
+    return staff.contact_email
 
 
 def _hash_token(raw_token: str) -> str:
@@ -169,9 +185,15 @@ def create_shift(
 def cancel_shift(session: Session, *, venue: Venue, actor: User, shift: Shift) -> Shift:
     """Idempotent: an already-cancelled Shift is a no-op, no duplicate
     AuditEvent. Revokes any StaffLink issued for this Shift as part of the
-    same transaction — a signed link is only ever valid for a live Shift."""
+    same transaction — a signed link is only ever valid for a live Shift.
+
+    Epic 10 — notifies the assigned Staff member only if the Shift had
+    actually been published (they were never told about a draft, so
+    cancelling one is silent, same "only a real transition notifies"
+    reasoning as publish_shift's own idempotency)."""
     if shift.status == ShiftStatus.cancelled:
         return shift
+    was_published = shift.status == ShiftStatus.published
 
     with audited_transaction(
         session,
@@ -203,6 +225,29 @@ def cancel_shift(session: Session, *, venue: Venue, actor: User, shift: Shift) -
                 entity_type="shift",
                 entity_id=shift.id,
                 after={"revoked_count": revoked},
+            )
+
+        if was_published:
+            staff = session.get(Staff, shift.staff_id)
+            staff_email = _resolve_staff_email(session, staff=staff)
+            message_id = None
+            if staff_email:
+                message_id = send_email(
+                    to=staff_email,
+                    subject="Shift cancelled",
+                    body=(
+                        f"Hi {staff.name}, your shift on "
+                        f"{shift.start_at.isoformat()}–{shift.end_at.isoformat()} has been cancelled."
+                    ),
+                ).message_id
+            audit.record(
+                action="roster.notification_queued",
+                entity_type="staff",
+                entity_id=staff.id,
+                after={
+                    "shift_id": str(shift.id), "channel": "email", "reason": "shift_cancelled",
+                    "sent": message_id is not None, "message_id": message_id,
+                },
             )
 
     return shift
@@ -241,10 +286,12 @@ class PublishResult:
 def publish_shift(session: Session, *, venue: Venue, actor: User, shift: Shift) -> PublishResult:
     """draft -> published. Idempotent (already-published is a no-op, same
     reasoning as open_service_day — no duplicate notification for a
-    republish). Issues a fresh signed StaffLink and queues a notification
-    for the assigned Staff member as part of the same transaction; no email
-    provider exists yet (Epic 10), so the raw token is returned to the
-    caller directly, exactly like auth_service's dev_token."""
+    republish). Issues a fresh signed StaffLink and emails the assigned
+    Staff member (Epic 10 — see _resolve_staff_email) as part of the same
+    transaction; the raw token is ALSO still returned to the caller
+    directly, exactly like auth_service's dev_token, since there's no UI
+    that reads email in this backend build and every earlier epic's own
+    live verification has relied on it."""
     if shift.status == ShiftStatus.cancelled:
         raise CannotPublishCancelledShift("Cannot publish a cancelled shift")
     if shift.status == ShiftStatus.published:
@@ -281,15 +328,32 @@ def publish_shift(session: Session, *, venue: Venue, actor: User, shift: Shift) 
                 "expires_at": issued.expires_at.isoformat(),
             },
         )
-        # Epic 10 (Operational Email Notifications) doesn't exist yet — this
-        # is the traceable stand-in for "queues a notification per affected
-        # Staff": a real AuditEvent now, real email delivery later, same
-        # shape as auth_service's request-link flow before Epic 10 lands.
+        # Epic 10 — real email delivery, via the one shared EmailSender
+        # hook. "sent" records whether a delivery address was actually on
+        # file (see _resolve_staff_email) — a Staff member with neither a
+        # login nor a contact_email still gets published/scheduled, just
+        # with no notification, exactly like Epic 5's PurchaseOrder can
+        # still be built with a supplier that has no contact_email on file.
+        staff_email = _resolve_staff_email(session, staff=staff)
+        message_id = None
+        if staff_email:
+            message_id = send_email(
+                to=staff_email,
+                subject="New shift published",
+                body=(
+                    f"Hi {staff.name}, you've been rostered on for "
+                    f"{shift.start_at.isoformat()}–{shift.end_at.isoformat()}. "
+                    f"Confirm or decline using this link token: {issued.raw_token}"
+                ),
+            ).message_id
         audit.record(
             action="roster.notification_queued",
             entity_type="staff",
             entity_id=staff.id,
-            after={"shift_id": str(shift.id), "channel": "email", "reason": "shift_published"},
+            after={
+                "shift_id": str(shift.id), "channel": "email", "reason": "shift_published",
+                "sent": message_id is not None, "message_id": message_id,
+            },
         )
 
     return PublishResult(shift=shift, staff_link_raw_token=issued.raw_token)

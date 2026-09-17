@@ -24,6 +24,11 @@ class Staff(UUIDPKMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Epic 10 — the only way to email a signed shift link to a Staff member
+    # with no login at all (user_id is None): mirrors Supplier.contact_email
+    # exactly. A Staff WITH a user_id is instead reached at their User.email
+    # (their actual login identity) — see roster_service._resolve_staff_email.
+    contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
 
     skills: Mapped[list["StaffSkill"]] = relationship(back_populates="staff")
 

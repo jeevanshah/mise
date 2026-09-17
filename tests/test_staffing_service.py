@@ -52,6 +52,14 @@ def test_create_staff_with_user_id_links_it(session):
     assert staff.user_id == other_user.id
 
 
+def test_create_staff_with_contact_email(session):
+    owner, venue = _owner_and_venue(session)
+    staff = create_staff(
+        session, venue=venue, actor=owner, name="Line Cook", contact_email="linecook@example.com",
+    )
+    assert staff.contact_email == "linecook@example.com"
+
+
 def test_add_staff_skill_creates_and_rejects_duplicate(session):
     owner, venue = _owner_and_venue(session)
     staff = create_staff(session, venue=venue, actor=owner, name="Line Cook")

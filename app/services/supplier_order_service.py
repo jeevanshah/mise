@@ -46,6 +46,7 @@ from app.models.supplier import Supplier
 from app.models.user import User
 from app.models.venue import Venue
 from app.services.audit_service import audited_transaction
+from app.services.email_service import send_email
 
 
 class MissingOrderIdentity(Exception):
@@ -93,21 +94,21 @@ class ProviderSendResult:
 
 def _default_email_provider(*, supplier: Supplier, purchase_order: PurchaseOrder) -> ProviderSendResult:
     """
-    Stub provider for v1. Epic 10 introduces the real pluggable EmailSender
-    interface (console/log sender by default, swappable for a real
-    provider) — until then, this always "succeeds" as long as the supplier
-    has a contact_email on file, so the full draft -> sending -> sent
-    lifecycle, audit trail, and idempotency-key plumbing can be built,
-    tested, and used by Quick Capture (Epic 6) now. Epic 10 replaces this
-    function's body (and can raise ProviderSendError for real failures)
-    without changing send_purchase_order's contract.
+    Epic 10 landed the real pluggable EmailSender interface
+    (app/services/email_service.py) — this now routes through it instead of
+    fabricating its own message_id, exactly as this docstring always said
+    it would, without changing send_purchase_order's contract at all: still
+    raises ProviderSendError when the supplier has no contact_email on
+    file, still returns a ProviderSendResult.
     """
     if not supplier.contact_email:
         raise ProviderSendError(f"Supplier {supplier.id} has no contact_email on file")
-    return ProviderSendResult(
-        message_id=f"stub-{purchase_order.idempotency_key}",
-        recipient=supplier.contact_email,
+    sent = send_email(
+        to=supplier.contact_email,
+        subject=f"Purchase order {purchase_order.idempotency_key}",
+        body=f"A new purchase order (ref {purchase_order.idempotency_key}) has been sent for your attention.",
     )
+    return ProviderSendResult(message_id=sent.message_id, recipient=supplier.contact_email)
 
 
 EMAIL_PROVIDER: Callable[..., ProviderSendResult] = _default_email_provider
