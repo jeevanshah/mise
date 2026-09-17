@@ -1,6 +1,6 @@
 # Mise API
 
-Epic 1 (Foundation, Onboarding & Audit) of the locked Rev 4 spec — **complete**, all 9 steps. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
+Epic 1 (Foundation, Onboarding & Audit) — **complete**, all 9 steps. Epic 2 (Kitchen Roster) — **complete**. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
 
 ## What's built
 
@@ -14,7 +14,20 @@ Epic 1 (Foundation, Onboarding & Audit) of the locked Rev 4 spec — **complete*
 - **Step 8 — ServiceDay lifecycle:** `app/services/service_day_service.py`. `resolve_business_date(venue, at)` implements the "business_date ≠ calendar date" rule using `zoneinfo` (stdlib, no extra timezone dependency beyond `tzdata` for portability) — tested against the exact locked-spec scenario (a dinner service ending 1am is still the prior business_date) plus a same-instant comparison across two different venue timezones and a custom boundary. `get_or_create_service_day` is the lazy-creation half; `open_service_day` is the idempotent, audited `planned → open` transition. `GET /venues/{id}/service-days/current` and `POST /venues/{id}/service-days/start` expose both end to end (no Epic 2 entity yet triggers this automatically, so these routes are how it's proven live rather than left as an untested function).
 - **Step 9 — Tenancy:** the data-layer half lives in `tests/test_tenancy.py`; the HTTP-level half is proven against real endpoints in every `test_*_http.py` file (not just a single throwaway route) — a Membership at Venue A gets 403 at Venue B for every resource type (stations, staff, suppliers, service-days, ...), and a nonexistent venue 403s identically to one owned by someone else so the response never leaks which venue IDs exist.
 
-**Epic 1 is done.** Epic 2 (Kitchen Roster) is next per the locked build order, but is gated on confirming the service-period question with the customer (lunch/dinner/events as separate `ServicePeriod` tracking vs. one `ServiceDay` per day) — see the epics doc. Don't start Epic 2 assuming the documented default without checking that's still current.
+**Epic 1 is done.**
+
+## Epic 2 — Kitchen Roster
+
+The service-period question (lunch/dinner/events as a separate `ServicePeriod` vs. one `ServiceDay` per day) is **confirmed**: no `ServicePeriod` for v1, coverage stays keyed by day-of-week only — the documented default in the epics doc. `app/services/roster_service.py` + `app/api/routes/roster.py`:
+
+- **Shift create** (`POST /venues/{id}/shifts`) — one Shift = one Station × one Staff member for a time span; a station/day cell with several people on it is several Shift rows. Rejects (409) a Staff member being scheduled into two overlapping Shifts, **including across different Stations** — checked before saving. `business_date`/`ServiceDay` is resolved and lazily created from `start_at` (same `resolve_business_date` as Epic 1) but stays `planned` — creating a future Shift is "first referenced," not an operational write, so it doesn't open the day.
+- **Publish** (`POST /venues/{id}/shifts/{id}/publish`, or `POST /venues/{id}/rosters/publish-week` for a whole week at once) — `draft → published`, idempotent (republishing is a no-op, no duplicate link/notification). Issues a signed `StaffLink` scoped to that one Shift and queues a notification per affected Staff member — no email provider exists yet (Epic 10), so this is a real, traceable `AuditEvent` stand-in today (`roster.notification_queued`) and the raw link token is returned directly in the response outside `ENVIRONMENT=production`, exactly like `auth_service`'s `dev_token`.
+- **Cancel** (`POST /venues/{id}/shifts/{id}/cancel`) — idempotent; revokes any `StaffLink` issued for that Shift in the same transaction, since a signed link is only ever valid for a live Shift.
+- **Copy last week** (`POST /venues/{id}/rosters/copy-week`) — duplicates every non-cancelled Shift from one week into another as fresh `draft` Shifts (never inherits `published`), creating target `ServiceDay`s as needed. Preserves local wall-clock time-of-day (not the raw UTC offset) via the venue's own timezone, so an overnight 6pm–1am shift still crosses midnight the same way after the copy. Validated in two passes — every prospective new Shift is checked for overlap against existing Shifts *and* against the rest of the batch before anything is written, so a conflict aborts the whole copy with nothing created.
+- **StaffResponse is a genuinely separate state machine from Shift.status** (locked AC) — cancelling or republishing a Shift never touches it. Staff respond confirm/decline either logged in (`POST /venues/{id}/shifts/{id}/respond`, only if their own `Staff.user_id` is the one assigned) or via the signed link with no login at all (`GET /staff-links/{token}` to view, `POST /staff-links/{token}/respond` to answer) — the link 404s the same way for unknown, expired, revoked, or already-cancelled-Shift tokens, so a guess can't distinguish which.
+- **Coverage warnings** (`GET /venues/{id}/service-days/{business_date}/coverage-warnings`) — fires when Shifts (draft or published, not cancelled) scheduled against a Station and overlapping a `StationCoverageRule`'s day/time window fall below that rule's `minimum_staff`; a shift entirely outside the window doesn't count.
+
+## Epic 3 (Attendance & Coverage) is next per the locked build order.
 
 ## Local setup
 
@@ -32,7 +45,7 @@ Tests run against a **separate** database (`mise_test` by default — see `tests
 
 ```bash
 createdb mise_test   # once, locally — CI does this via the postgres service container
-pytest tests/ -v     # 87 tests
+pytest tests/ -v     # 124 tests
 ```
 
 ## Design notes worth knowing before extending this
@@ -46,5 +59,7 @@ pytest tests/ -v     # 87 tests
 - **Multi-row creates (Organisation+Venue+Membership, or a lazily-created ServiceDay immediately opened) commit as one transaction**, not several. The pattern: flush the entities that don't exist yet to get their ids, THEN open `audited_transaction` for the rest — its one `commit()` covers everything pending on the session, so a failure anywhere rolls back all of it. See `onboarding_service.create_organisation_with_venue`'s docstring.
 - **Role checks always hit the DB, never the token.** `require_membership` looks up `Membership` fresh on every request — a revoked Membership takes effect on the very next request, not whenever the JWT expires.
 - **A 403 from `require_membership` never distinguishes "wrong role" from "venue doesn't exist" from "belongs to someone else"** in a way that leaks across tenants.
-- **`MANAGEMENT_ROLES`** (`app/api/deps.py`: owner, ops_manager, head_chef) gates every "configure the venue" action (stations, staff, coverage rules, suppliers, ingredients, menu items, equipment). sous_chef/line_staff can read but not configure. Reuse this constant rather than redefining the role set per router.
+- **`MANAGEMENT_ROLES`** (`app/api/deps.py`: owner, ops_manager, head_chef) gates every "configure the venue" action (stations, staff, coverage rules, suppliers, ingredients, menu items, equipment, shifts/roster). sous_chef/line_staff can read but not configure. Reuse this constant rather than redefining the role set per router.
 - **A duplicate create is a 409, never a silent update.** StaffSkill, StationCoverageRule, and inviting an existing Membership all follow this — see each service module's `Duplicate*` exception classes.
+- **A signed `StaffLink` is scoped to exactly one Shift**, not "all of this Staff member's shifts" — each publish issues its own link, the same way Epic 3's check-in links will. That's what makes "invalidated automatically if the underlying Shift is cancelled" a precise, live-checked rule (see `roster_service.resolve_staff_link`) rather than a cached flag.
+- **`Shift.start_at`/`end_at` are timezone-aware instants, not a (date, time-of-day) pair.** A dinner shift can run 18:00–01:00; overlap checks and coverage-window comparisons all work in absolute instant arithmetic, converting to the venue's local timezone only where the locked spec's rules are actually stated in local time (coverage windows, "copy last week"'s wall-clock preservation).
