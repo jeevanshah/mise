@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.magic_link import MagicLink
 from app.models.user import User
+from app.services.user_service import find_or_create_user
 
 
 class InvalidOrExpiredToken(Exception):
@@ -67,12 +68,7 @@ def issue_magic_link(session: Session, *, email: str, purpose: str = "login") ->
     that doesn't exist yet creates the User record. Org/Venue creation
     itself is Epic 1 step 5, not this function.
     """
-    normalised_email = email.strip().lower()
-    user = session.query(User).filter_by(email=normalised_email).one_or_none()
-    if user is None:
-        user = User(email=normalised_email)
-        session.add(user)
-        session.flush()  # assign user.id without a separate commit
+    user = find_or_create_user(session, email=email)
 
     raw_token = _generate_raw_token()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.magic_link_expire_minutes)

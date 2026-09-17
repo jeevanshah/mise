@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 
 from app.api.routes.auth import router as auth_router
+from app.api.routes.onboarding import router as onboarding_router
 from app.core.config import settings
 
 app = FastAPI(title="Mise API", version="0.1.0")
 
 app.include_router(auth_router)
+app.include_router(onboarding_router)
 
 
 @app.get("/health")
@@ -16,6 +18,6 @@ def health() -> dict:
     return {"status": "ok", "environment": settings.environment}
 
 
-# Routers for onboarding, staff/stations, suppliers/ingredients etc. are
-# added from Epic 1 step 5 onward, now that auth/Membership (step 4) exists
-# to protect them via app.api.deps.require_membership.
+# Routers for staff/stations, suppliers/ingredients/menu/equipment etc. are
+# added from Epic 1 step 6 onward, now that auth/Membership (step 4) and
+# onboarding (step 5) exist to build on.
