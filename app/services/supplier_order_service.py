@@ -189,6 +189,7 @@ def add_or_merge_line(
     unit: str | None = None,
     required_delivery_date: date | None = None,
     order_cycle: str | None = None,
+    source: str = "manual",
 ) -> AddOrMergeLineResult:
     """Finds/creates the draft matching (venue, supplier, delivery date or
     cycle, status=draft), then either merges `quantity` into an existing
@@ -196,7 +197,12 @@ def add_or_merge_line(
     defaults from Ingredient.ordering_unit when not given. The caller
     (chef, or Quick Capture on their behalf) sees previous_quantity/new
     quantity in the result and audit trail to confirm or correct the
-    merge afterwards via update_line_quantity."""
+    merge afterwards via update_line_quantity.
+
+    source (Epic 11 — "manual" or "capture") is recorded only when a NEW
+    line is created; merging into an existing line never changes who
+    originally created it. Quick Capture's restock branch is the only
+    caller that passes source="capture"."""
     supplier = _validated_supplier(session, venue=venue, supplier_id=supplier_id)
     ingredient = _validated_ingredient(session, venue=venue, ingredient_id=ingredient_id)
     resolved_unit = unit or ingredient.ordering_unit
@@ -233,7 +239,7 @@ def add_or_merge_line(
 
         line = PurchaseOrderLine(
             purchase_order_id=order.id, ingredient_id=ingredient.id,
-            quantity=quantity, unit=resolved_unit,
+            quantity=quantity, unit=resolved_unit, source=source,
         )
         session.add(line)
         session.flush()
@@ -241,7 +247,7 @@ def add_or_merge_line(
             action="purchase_order_line.created", entity_type="purchase_order_line", entity_id=line.id,
             after={
                 "purchase_order_id": str(order.id), "ingredient_id": str(ingredient.id),
-                "quantity": str(quantity), "unit": resolved_unit,
+                "quantity": str(quantity), "unit": resolved_unit, "source": source,
             },
         )
         return AddOrMergeLineResult(purchase_order=order, line=line, merged=False, previous_quantity=None)
@@ -337,12 +343,17 @@ def send_purchase_order(
         purchase_order.last_error = None
         session.add(purchase_order)
         session.flush()
+        # Epic 11 metrics wiring: "logged with source (manual vs. from
+        # Capture)" — a draft can accumulate lines from both, so this is
+        # every distinct source actually on the order, not a single label
+        # that would overclaim when the two are mixed.
+        sources = sorted({line.source for line in purchase_order.lines})
         audit.record(
             action="purchase_order.sent", entity_type="purchase_order", entity_id=purchase_order.id,
             before={"status": "sending"},
             after={
                 "status": "sent", "provider_message_id": result.message_id,
-                "recipient_snapshot": result.recipient,
+                "recipient_snapshot": result.recipient, "sources": sources,
             },
         )
     return purchase_order

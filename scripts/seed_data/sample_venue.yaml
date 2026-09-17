@@ -1,0 +1,102 @@
+# SAMPLE / DEMO DATA — not a real pilot customer's data.
+#
+# No actual pilot venue's data was available to this build, so this is a
+# clearly-labeled, made-up "Harbourside Diner" dataset: enough of every
+# entity type (stations, staff, suppliers, ingredients, menu items,
+# equipment, a prep template, coverage rules) to demo the app end-to-end
+# or smoke-test a fresh environment. When a real pilot venue is onboarded,
+# copy this file, replace every value with that venue's real information,
+# and run scripts/seed.py against it — the script itself is fully
+# data-driven and doesn't know or care that this particular file is fake.
+
+owner_email: owner@harboursidediner.example
+organisation_name: Harbourside Diner Pty Ltd
+venue_name: Harbourside Diner
+timezone: Australia/Sydney
+business_day_boundary: "04:00"
+
+stations:
+  - Grill
+  - Pastry
+  - Prep
+
+staff:
+  - name: Jamie Nguyen
+    contact_email: jamie@harboursidediner.example
+    skills: [Grill, Prep]
+  - name: Priya Sharma
+    contact_email: priya@harboursidediner.example
+    skills: [Pastry]
+  - name: Sam Okafor
+    contact_email: sam@harboursidediner.example
+    skills: [Grill]
+
+coverage_rules:
+  # day_of_week: 0=Monday .. 6=Sunday
+  - station: Grill
+    day_of_week: 4
+    window_start: "17:00"
+    window_end: "22:00"
+    minimum_staff: 2
+  - station: Pastry
+    day_of_week: 4
+    window_start: "07:00"
+    window_end: "12:00"
+    minimum_staff: 1
+
+suppliers:
+  - name: Coastal Seafood Co
+    contact_email: orders@coastalseafood.example
+    order_days: "mon,thu"
+    cutoff_time: "14:00"
+    notes: "Call ahead for oyster availability in summer."
+  - name: Greenfields Produce
+    contact_email: orders@greenfieldsproduce.example
+    order_days: "mon,wed,fri"
+    cutoff_time: "10:00"
+
+ingredients:
+  - name: Barramundi fillet
+    unit: g
+    ordering_unit: kg
+    preferred_supplier: Coastal Seafood Co
+  - name: Heirloom tomatoes
+    unit: g
+    ordering_unit: kg
+    preferred_supplier: Greenfields Produce
+  - name: Unsalted butter
+    unit: g
+    ordering_unit: block
+
+menu_items:
+  - Grilled Barramundi
+  - Heirloom Tomato Salad
+  - Sticky Date Pudding
+
+equipment_items:
+  - name: Combi Oven
+    location: Main kitchen
+    repair_contact: "Kitchen Tech Services — 1800 555 010"
+  - name: Walk-in Freezer
+    location: Back of house
+  - name: Stand Mixer
+    location: Pastry station
+
+prep_templates:
+  - name: Standard Dinner Prep
+    items:
+      - station: Grill
+        item: Portion barramundi fillets
+        quantity: "10"
+        unit: kg
+        priority: 1
+      - station: Pastry
+        item: Prep sticky date pudding batter
+        quantity: "6"
+        unit: kg
+        priority: 0
+      - station: Prep
+        item: Wash and slice heirloom tomatoes
+        quantity: "4"
+        unit: kg
+        priority: 0

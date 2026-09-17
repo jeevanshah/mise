@@ -150,6 +150,11 @@ def close_service_day(
             after={
                 "note": note, "item_count": len(handover.items),
                 "time_to_close_seconds": time_to_close_seconds,
+                # Epic 11 metrics wiring: "logged with open/close
+                # timestamps" — opened_at/closed_at inline on the event
+                # itself, not just derivable by joining back to ServiceDay.
+                "opened_at": service_day.opened_at.isoformat() if service_day.opened_at else None,
+                "closed_at": closed_at.isoformat(),
             },
         )
     return handover

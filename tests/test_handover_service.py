@@ -72,6 +72,9 @@ def test_close_flips_status_and_records_timestamp(session):
     assert event.after_data == {"status": "closed"}
     saved_event = session.query(AuditEvent).filter_by(action="handover.saved").one()
     assert saved_event.after_data["note"] == "quiet night"
+    # Epic 11 metrics wiring: "logged with open/close timestamps"
+    assert saved_event.after_data["opened_at"] is not None
+    assert saved_event.after_data["closed_at"] is not None
 
 
 def test_close_populates_all_six_handover_item_categories(session):

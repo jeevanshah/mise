@@ -104,6 +104,7 @@ def test_confirm_restock_calls_add_or_merge_line(session):
     assert purchase_order.lines[0].ingredient_id == onions.id
     assert purchase_order.lines[0].quantity == Decimal("10")
     assert purchase_order.supplier_id == supplier.id  # defaulted from preferred_supplier_id
+    assert purchase_order.lines[0].source == "capture"  # Epic 11 metrics wiring
 
 
 def test_confirm_restock_without_supplier_or_preferred_supplier_fails(session):

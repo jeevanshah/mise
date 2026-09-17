@@ -1,6 +1,6 @@
 # Mise API
 
-Epics 1–10 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture, Handover, Chef Brief, Kitchen Memory Interface, Operational Email Notifications. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
+Epics 1–11 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture, Handover, Chef Brief, Kitchen Memory Interface, Operational Email Notifications, Hardening & Pilot Prep. Locked Rev 4 spec — this is the last epic in the locked build order. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
 
 ## What's built
 
@@ -109,6 +109,18 @@ The service-period question (lunch/dinner/events as a separate `ServicePeriod` v
 - **No duplicate notification for the same trigger within the same ServiceDay (locked AC), no new table**: each trigger's own AuditEvent — keyed by `(action, entity_type, entity_id, service_day_id)` — IS the dedup record; a repeat check that finds the identical trigger already logged against the current ServiceDay sends no email and writes nothing. This generalizes Epic 2's own "AuditEvent as the notification record" stand-in and matches Epic 9's preference for the simplest mechanism that's actually correct over new schema. Verified live: running the checks twice in a row against the same venue only ever notifies once per trigger.
 - **Email only** (locked AC) — no SMS/push anywhere in this module or the staff-facing paths it touches.
 
+## Epic 11 — Hardening & Pilot Prep
+
+The last epic in the locked build order. Its own AC framing is different from every prior epic's — **"this epic finds gaps, it doesn't build the logger"** — so most of the work here is verification against the existing ten epics, with new code only where that verification actually turned up something missing. Several of the locked ACs (390px one-handed phone screens, a real Head Chef walkthrough, actual visual rendering in Gmail/Outlook web, a daily backup running unattended in production) are front-end, human-process, or ops-deployment concerns outside what a backend build can do or prove — called out explicitly below, the same way Epic 8 called out its own front-end-only ACs.
+
+- **Role × module permission matrix** (`tests/test_permission_matrix.py`) — one test per module (onboarding, staffing, catalog, service days, roster, attendance, prep, purchase orders, capture, handover, chef brief, kitchen memory, notifications, pilot metrics) walks all five roles (owner, ops_manager, head_chef, sous_chef, line_staff) through that module's write and read endpoints and asserts the tier actually enforced matches the constant the route depends on — `MANAGEMENT_ROLES` for most configuration/decision actions, any Membership for reads, and the narrower `PREP_EXECUTION_ROLES` (head_chef/sous_chef only — deliberately excludes owner/ops_manager) for prep-task status updates specifically. This is a locked-down snapshot of every access boundary already built across Epics 1–10, not new access control — nothing here changed a single route's actual dependency.
+- **Audit-coverage verification pass, two real gaps found and fixed**: every `session.commit()` outside `audit_service.py` and the one bulk `.update()` call (`roster_service`'s StaffLink revoke) were reviewed across every service module — each is either already paired with its own `audit.record()` or is a legitimate non-audited lazy-materialization pattern already established in earlier epics (e.g. creating a User/MagicLink before a Membership exists, lazily creating a ServiceDay on first reference). Two gaps against the locked spec's own "Metrics wiring checklist" were real and are now fixed: `PurchaseOrderLine.source` (`"manual"` vs. `"capture"`, set once at creation and never touched by a later merge — mirrors `added_after_close`'s precision from Epic 7) is now recorded on `purchase_order_line.created`, and `purchase_order.sent` now includes the distinct `sources` across the order's lines; `handover.saved` now carries `opened_at`/`closed_at` inline on the event itself, not just derivable by joining back to `ServiceDay`. `migrations/versions/0011_epic11_hardening.py` adds the one new column this needed (`purchase_order_lines.source`).
+- **The three remaining metrics-wiring items are genuinely new** (`app/services/pilot_metrics_service.py` + `app/api/routes/pilot_metrics.py`) — a weekly self-reported "minutes saved" prompt, missed-order/handover-failure incidents tagged to a `ServiceDay`, and the owner's pay-at-proposed-price yes/no. **No new table for any of the three** — each is a single `AuditEvent`; the record IS the event, not a mutation the event describes, the same reasoning Epic 2's `roster.notification_queued` and Epic 10's dedup-via-AuditEvent already lean on. `POST /venues/{id}/metrics/minutes-saved` and `.../incidents` need `MANAGEMENT_ROLES`; `POST /venues/{id}/metrics/pilot-decision` is **owner-only** — deliberately narrower, per the locked AC's literal "Owner's ... answer" — verified live (an ops_manager and a head_chef both get `403`, the owner gets `201`). `GET /venues/{id}/metrics` reads back the raw feed, oldest first, with no aggregation (that's a reporting concern).
+- **Seed/import script** (`scripts/seed.py` + `scripts/seed_data/sample_venue.yaml`) — the locked AC asks for the known customer's real data; none was available to this build, so what ships is a fully generic, config/YAML-driven script plus one clearly-labeled **fictional** sample dataset ("Harbourside Diner") for demos and smoke-testing. Onboarding a real pilot venue is: copy the YAML, replace every value with that venue's real information, run the script against it. Built on the exact same service-layer functions every route calls (`onboarding_service`, `staffing_service`, `catalog_service`, `prep_service`) rather than raw inserts, so a seeded venue gets the identical validation and `AuditEvent` trail a hand-built one would. One-shot, not an upsert — re-running against an `organisation_name` that already exists is a verified no-op, not a duplicate.
+- **Backup + one tested restore** (`scripts/backup.sh` + `scripts/restore.sh`) — `backup.sh` wraps `pg_dump --format=custom` (reads `DATABASE_URL`, same variable `app/core/config.py` reads, timestamped output, never overwrites a prior backup); `restore.sh` wraps `pg_restore --clean --if-exists` and refuses to run without an explicit `--yes`. **Actually tested end to end**, not just written: backed up `mise_dev` (post-seed), restored into a throwaway `mise_restore_check` database, and confirmed matching row counts across `organisations`/`venues`/`staff`/`suppliers`/`audit_events` plus the seeded venue's name present in the restored copy — then dropped the throwaway database. A daily backup actually *running* unattended in a pilot venue's production environment is a deployment/ops concern outside this backend build; the script and its one tested restore are what's demonstrated here.
+- **Handover/roster PDF export** (`app/services/pdf_export_service.py`, `GET /venues/{id}/service-days/{business_date}/handover/pdf` and `GET /venues/{id}/rosters/pdf?week_start=...`) — the backend-buildable half of "Order emails and Handover/roster PDFs render correctly in Gmail and Outlook web": a Handover PDF resolves every included `HandoverItem` (across all six polymorphic categories) back to a human-readable line, and a roster PDF flattens a week of `Shift`s into a printable table, times shown in the venue's own local timezone (not raw UTC) via the same `ZoneInfo(venue.timezone)` pattern `roster_service` already uses. Same read tier as the JSON views they mirror (any Membership). Built with `reportlab` (pure Python, no system-level rendering dependency) rather than an HTML-to-PDF pipeline. **The actual "renders correctly in Gmail/Outlook web" visual QA is out of scope** for a backend build — that's the artifact this epic can produce, not the email-client rendering test itself.
+- **Explicitly out of scope for this backend build** (matching Epic 8's own precedent for front-end/ops/human-process ACs): the 390px one-handed phone layout for any of the above; a daily backup actually scheduled and running unattended in a pilot venue's production environment (the script + one tested restore are what's demonstrated); the real guided Head Chef walkthrough before parallel-run week; and the visual confirmation that order emails and the two PDFs above actually render correctly inside Gmail and Outlook web specifically (their content and generation are fully built and tested here).
+
 ## Local setup
 
 ```bash
@@ -117,6 +129,14 @@ docker compose up -d db          # or point DATABASE_URL at your own Postgres
 pip install -r requirements.txt
 alembic upgrade head
 uvicorn app.main:app --reload    # GET /health
+python3 scripts/seed.py          # optional — loads the sample "Harbourside Diner" dataset
+```
+
+Backup/restore (Epic 11 — see `scripts/backup.sh`/`scripts/restore.sh` for the full walkthrough):
+
+```bash
+./scripts/backup.sh                                                 # writes backups/<db>_<timestamp>.dump
+./scripts/restore.sh backups/<file>.dump --yes --target <DATABASE_URL>  # --yes is required; overwrites the target
 ```
 
 ## Tests
@@ -125,7 +145,7 @@ Tests run against a **separate** database (`mise_test` by default — see `tests
 
 ```bash
 createdb mise_test   # once, locally — CI does this via the postgres service container
-pytest tests/ -v     # 291 tests
+pytest tests/ -v     # 326 tests
 ```
 
 ## Design notes worth knowing before extending this

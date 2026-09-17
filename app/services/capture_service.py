@@ -295,6 +295,7 @@ def confirm_capture(
             session, venue=venue, actor=actor, supplier_id=supplier_id, ingredient_id=resolved_id,
             quantity=resolved_quantity, unit=resolved_unit,
             required_delivery_date=required_delivery_date, order_cycle=order_cycle,
+            source="capture",
         )
     except (UnknownSupplier, UnknownIngredient, MissingOrderIdentity) as exc:
         raise MissingConfirmationDetails(str(exc))

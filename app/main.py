@@ -9,6 +9,7 @@ from app.api.routes.handover import router as handover_router
 from app.api.routes.kitchen_memory import router as kitchen_memory_router
 from app.api.routes.notification import router as notification_router
 from app.api.routes.onboarding import router as onboarding_router
+from app.api.routes.pilot_metrics import router as pilot_metrics_router
 from app.api.routes.prep import router as prep_router
 from app.api.routes.purchase_order import router as purchase_order_router
 from app.api.routes.roster import router as roster_router
@@ -32,6 +33,7 @@ app.include_router(handover_router)
 app.include_router(chef_brief_router)
 app.include_router(kitchen_memory_router)
 app.include_router(notification_router)
+app.include_router(pilot_metrics_router)
 
 
 @app.get("/health")
@@ -42,5 +44,4 @@ def health() -> dict:
     return {"status": "ok", "environment": settings.environment}
 
 
-# Epics 1-10 are complete. Epic 11 (Hardening & Pilot Prep) is next per
-# the locked build order.
+# Epics 1-11 are complete — the full locked Rev 4 build order.

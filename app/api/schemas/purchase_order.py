@@ -34,6 +34,7 @@ class PurchaseOrderLineOut(BaseModel):
     quantity: Decimal
     unit: str
     delivery_note: str | None
+    source: str
 
     model_config = {"from_attributes": True}
 

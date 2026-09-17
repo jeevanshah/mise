@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import MANAGEMENT_ROLES, get_current_user, require_membership
@@ -26,6 +26,7 @@ from app.models.staff import Staff
 from app.models.station import Station
 from app.models.user import User
 from app.models.venue import Venue
+from app.services.pdf_export_service import render_roster_pdf
 from app.services.roster_service import (
     CannotPublishCancelledShift,
     CopyWeekConflict,
@@ -140,6 +141,24 @@ def list_shifts(
         query = query.filter(ServiceDay.business_date == business_date)
 
     return query.order_by(Shift.start_at).all()
+
+
+@router.get("/venues/{venue_id}/rosters/pdf")
+def get_roster_pdf(
+    venue_id: uuid.UUID,
+    week_start: date = Query(...),
+    membership: Membership = Depends(require_membership()),  # noqa: ARG001
+    session: Session = Depends(get_session),
+) -> Response:
+    """Same read tier as list_shifts (any membership) — a printable version
+    of the same week the roster grid shows, for posting on a kitchen wall
+    or forwarding to a relief cook with no app access."""
+    venue = _get_venue_or_404(session, venue_id)
+    pdf_bytes = render_roster_pdf(session, venue=venue, week_start=week_start)
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="roster-{week_start.isoformat()}.pdf"'},
+    )
 
 
 @router.get("/venues/{venue_id}/shifts/{shift_id}", response_model=ShiftOut)

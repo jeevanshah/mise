@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import MANAGEMENT_ROLES, get_current_user, require_membership
@@ -27,6 +27,7 @@ from app.services.handover_service import (
     reopen_service_day,
     set_handover_item_included,
 )
+from app.services.pdf_export_service import render_handover_pdf
 
 router = APIRouter(tags=["handover"])
 
@@ -110,6 +111,28 @@ def get_handover_route(
     if handover is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This service day has no handover yet")
     return handover
+
+
+@router.get("/venues/{venue_id}/service-days/{business_date}/handover/pdf")
+def get_handover_pdf_route(
+    venue_id: uuid.UUID,
+    business_date: date,
+    membership: Membership = Depends(require_membership()),  # noqa: ARG001
+    session: Session = Depends(get_session),
+) -> Response:
+    """Same read tier as the JSON handover view (any membership) — a
+    printable version for a Head Chef to hand off to whoever's opening
+    tomorrow, or keep on file."""
+    venue = _get_venue_or_404(session, venue_id)
+    service_day = _get_service_day_or_404(session, venue_id, business_date)
+    handover = get_handover_for_service_day(session, service_day_id=service_day.id)
+    if handover is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This service day has no handover yet")
+    pdf_bytes = render_handover_pdf(session, venue=venue, service_day=service_day, handover=handover)
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="handover-{business_date.isoformat()}.pdf"'},
+    )
 
 
 @router.patch(

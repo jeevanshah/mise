@@ -74,6 +74,28 @@ def test_add_line_creates_draft_with_open_draft_identity(session):
     assert result.purchase_order.status == PurchaseOrderStatus.draft
     assert result.line.unit == "carton"  # defaulted from Ingredient.ordering_unit
     assert result.line.quantity == Decimal("5")
+    assert result.line.source == "manual"  # Epic 11 — the HTTP-facing default
+
+
+def test_add_line_accepts_an_explicit_source_and_merge_does_not_change_it(session):
+    """Epic 11 — Quick Capture is the only caller that ever passes
+    source="capture" (see capture_service.py); merging into an existing
+    line never changes who originally created it."""
+    owner, venue = _owner_venue(session)
+    supplier, ingredient = _supplier_and_ingredient(session, venue, owner)
+
+    created = add_or_merge_line(
+        session, venue=venue, actor=owner, supplier_id=supplier.id, ingredient_id=ingredient.id,
+        quantity=Decimal("5"), required_delivery_date=date(2026, 6, 10), source="capture",
+    )
+    assert created.line.source == "capture"
+
+    merged = add_or_merge_line(
+        session, venue=venue, actor=owner, supplier_id=supplier.id, ingredient_id=ingredient.id,
+        quantity=Decimal("2"), required_delivery_date=date(2026, 6, 10), source="manual",
+    )
+    assert merged.merged is True
+    assert merged.line.source == "capture"  # unchanged — this line was created by Capture
 
 
 def test_missing_identity_raises(session):
@@ -229,6 +251,25 @@ def test_send_purchase_order_success_sets_fields_and_status(session):
     assert order.provider_message_id is not None
     assert order.idempotency_key is not None
     assert order.last_error is None
+
+
+def test_send_purchase_order_records_sources_on_the_sent_event(session):
+    owner, venue = _owner_venue(session)
+    supplier, ingredient = _supplier_and_ingredient(session, venue, owner, contact_email="orders@fresh.co")
+    onions = create_ingredient(session, venue=venue, actor=owner, name="Basil", unit="kg", ordering_unit="box")
+    result = add_or_merge_line(
+        session, venue=venue, actor=owner, supplier_id=supplier.id, ingredient_id=ingredient.id,
+        quantity=Decimal("5"), required_delivery_date=date(2026, 6, 10), source="manual",
+    )
+    add_or_merge_line(
+        session, venue=venue, actor=owner, supplier_id=supplier.id, ingredient_id=onions.id,
+        quantity=Decimal("1"), required_delivery_date=date(2026, 6, 10), source="capture",
+    )
+
+    send_purchase_order(session, venue=venue, actor=owner, purchase_order=result.purchase_order)
+
+    event = session.query(AuditEvent).filter_by(action="purchase_order.sent").one()
+    assert event.after_data["sources"] == ["capture", "manual"]
 
 
 def test_cannot_send_empty_order(session):

@@ -125,6 +125,15 @@ class PurchaseOrderLine(UUIDPKMixin, TimestampMixin, Base):
     # note") — recorded per-line since a partial delivery can under-deliver
     # different lines for different reasons.
     delivery_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Epic 11 — "manual" (a chef built this line themselves) or "capture"
+    # (Quick Capture's restock branch added it). Set once, at line
+    # creation, and never touched again — a later merge that tops up an
+    # existing line does NOT change who originally created it, the same
+    # "a flag only ever means one specific thing" precision as
+    # added_after_close elsewhere in this codebase. send_purchase_order
+    # aggregates every line's source into the purchase_order.sent
+    # AuditEvent (locked AC: "logged with source, manual vs. from Capture").
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
 
     purchase_order: Mapped["PurchaseOrder"] = relationship(back_populates="lines")
 
