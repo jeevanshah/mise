@@ -27,7 +27,17 @@ The service-period question (lunch/dinner/events as a separate `ServicePeriod` v
 - **StaffResponse is a genuinely separate state machine from Shift.status** (locked AC) — cancelling or republishing a Shift never touches it. Staff respond confirm/decline either logged in (`POST /venues/{id}/shifts/{id}/respond`, only if their own `Staff.user_id` is the one assigned) or via the signed link with no login at all (`GET /staff-links/{token}` to view, `POST /staff-links/{token}/respond` to answer) — the link 404s the same way for unknown, expired, revoked, or already-cancelled-Shift tokens, so a guess can't distinguish which.
 - **Coverage warnings** (`GET /venues/{id}/service-days/{business_date}/coverage-warnings`) — fires when Shifts (draft or published, not cancelled) scheduled against a Station and overlapping a `StationCoverageRule`'s day/time window fall below that rule's `minimum_staff`; a shift entirely outside the window doesn't count.
 
-## Epic 3 (Attendance & Coverage) is next per the locked build order.
+## Epic 3 — Attendance & Coverage
+
+`app/services/attendance_service.py` + `app/api/routes/attendance.py`. `AttendanceEvent` is an append-only log — nothing is ever updated or deleted. "Current attendance" for a Shift is always a derived read (the latest event by `recorded_at`; no event = `null`/"expected" — never stored), so the live status and the full history can never drift apart.
+
+- Chef logs an event any time (`POST /venues/{id}/shifts/{id}/attendance-events`, `MANAGEMENT_ROLES`) — no cap on corrections.
+- Staff logs **exactly one** event for their own Shift via the signed link (`POST /staff-links/{token}/attendance-events`, no login) — a second attempt is a 409, `DuplicateStaffCheckIn`.
+- A later event — chef or staff — wins for the displayed "current" status by `recorded_at`; the earlier one is retained untouched in the history, never overwritten.
+- `GET /venues/{id}/shifts/{id}/attendance` (derived current) and `.../attendance-events` (full history) — any Membership can read.
+- No GPS/biometric/location field anywhere on `AttendanceEvent` — verified by a test that walks the model's columns, not just left out by omission.
+
+## Epic 4 (Prep Plan) is next per the locked build order.
 
 ## Local setup
 
@@ -45,7 +55,7 @@ Tests run against a **separate** database (`mise_test` by default — see `tests
 
 ```bash
 createdb mise_test   # once, locally — CI does this via the postgres service container
-pytest tests/ -v     # 124 tests
+pytest tests/ -v     # 136 tests
 ```
 
 ## Design notes worth knowing before extending this

@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.routes.attendance import router as attendance_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.catalog import router as catalog_router
 from app.api.routes.onboarding import router as onboarding_router
@@ -16,6 +17,7 @@ app.include_router(staffing_router)
 app.include_router(catalog_router)
 app.include_router(service_days_router)
 app.include_router(roster_router)
+app.include_router(attendance_router)
 
 
 @app.get("/health")
@@ -26,7 +28,5 @@ def health() -> dict:
     return {"status": "ok", "environment": settings.environment}
 
 
-# Epic 1 is complete (steps 1-9). Epic 2 (Kitchen Roster) is now built too —
-# service-period question was confirmed: no separate ServicePeriod for v1,
-# coverage stays keyed by day-of-week only (see the epics doc). Epic 3
-# (Attendance & Coverage) is next.
+# Epics 1-3 are complete. Epic 4 (Prep Plan) is next per the locked build
+# order.
