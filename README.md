@@ -1,6 +1,6 @@
 # Mise API
 
-Epics 1–5 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
+Epics 1–6 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
 
 ## What's built
 
@@ -56,7 +56,18 @@ The service-period question (lunch/dinner/events as a separate `ServicePeriod` v
 - **Delivery** (`POST .../purchase-orders/{id}/delivery`) marks `received`/`partially_received`; a partial delivery requires at least one line-level note (`PartialDeliveryRequiresLineNote`, 422 otherwise) explaining what was short. `DeliveryIssue`s (`POST .../delivery-issues`) carry a typed `issue_type`, a stub `evidence` field (a URL/path string — no upload pipeline in v1), and a free-text `resolution`.
 - Every status transition — line created/merged/corrected, `sending`/`sent`/`send_failed`, delivery marked, issue logged — writes its own `AuditEvent` in the same `audited_transaction` as the mutation it records.
 
-## Epic 6 (Quick Capture) is next per the locked build order.
+## Epic 6 — Quick Capture (typed, rule-based)
+
+`app/services/capture_classifier.py` (pure, no DB writes) + `app/services/capture_service.py` (the create/confirm/reject lifecycle) + `app/api/routes/capture.py`. New entities: `Capture`, `MenuAvailabilityEvent` (added to `menu.py`), `EquipmentIssue` (added to `equipment.py`, as its own docstring already predicted).
+
+- **Rule-based, not ML** (locked AC): the classifier fuzzy-matches the chef's raw text against every `Ingredient`/`MenuItem`/`EquipmentItem` name at the venue using stdlib `difflib` — deterministic, no training, no model. Which **table** the winning name comes from is what decides the proposed action (`Ingredient` → `restock`, `MenuItem` → `eighty_six`, `EquipmentItem` → `equipment_issue`) — one matching pass instead of a separate keyword dictionary to keep in sync with the catalog. A regex separately pulls a leading quantity+unit out of the same text.
+- **Confidence threshold + forced choice, same code path:** at/above `MATCH_CONFIDENCE_THRESHOLD` with exactly one strong candidate, the match auto-proposes. Below it, or with *several* plausible candidates, `capture_type` is `unparsed` — the only difference is whether `candidate_matches` is empty (no good match at all — chef classifies from scratch) or populated (several plausible options — chef must explicitly pick one, never a silent best-guess). `confirm_capture` enforces this: an unresolved capture without an explicit `entity_type`/`entity_id` override raises `UnresolvedCapture` (422).
+- **"86" is chef shorthand, not a quantity** — a real bug caught during live verification: "86 the grilled salmon" was initially extracting `quantity=86`. Fixed by skipping a bare, unit-less "86" specifically (`"86 kg of onions"` still extracts fine, since a unit is present) — regression-tested in `test_capture_classifier.py`.
+- **Confirm dispatches, never re-implements:** `eighty_six` creates a `MenuAvailabilityEvent` scoped to the Capture's own `ServiceDay` (never a permanent flag on `MenuItem`); `restock` calls Epic 5's `add_or_merge_line` **directly** — Quick Capture has no order-creation logic of its own, only the supplier/delivery-date details a raw-text note can't supply on its own (`MissingConfirmationDetails` if neither is resolvable, including from `Ingredient.preferred_supplier_id`); `equipment_issue` creates an `EquipmentIssue`. Every branch updates the `Capture` row (`status`/`decided_by`/`decided_at`) **and** writes its own `AuditEvent` with before/after — the locked AC's "who, when, what was proposed, what was decided" is the same `capture.confirmed`/`capture.rejected` event pair every time, not a per-type special case.
+- Any Membership can create/list captures (kitchen-floor visibility); confirming or rejecting the resulting action needs `MANAGEMENT_ROLES`, matching the AC's "Chef" framing for the actual decision.
+- **No mic/camera affordance anywhere in Quick Capture** (locked AC) — `raw_text` is free text the chef typed, full stop. This is a backend build; there is no audio/image upload path to add one to.
+
+## Epic 7 (Handover) is next per the locked build order.
 
 ## Local setup
 
@@ -74,7 +85,7 @@ Tests run against a **separate** database (`mise_test` by default — see `tests
 
 ```bash
 createdb mise_test   # once, locally — CI does this via the postgres service container
-pytest tests/ -v     # 178 tests
+pytest tests/ -v     # 206 tests
 ```
 
 ## Design notes worth knowing before extending this

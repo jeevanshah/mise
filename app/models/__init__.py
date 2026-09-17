@@ -15,9 +15,15 @@ from app.models.station import Station, StationCoverageRule  # noqa: F401
 from app.models.service_day import ServiceDay, ServiceDayStatus  # noqa: F401
 from app.models.supplier import Supplier  # noqa: F401
 from app.models.ingredient import Ingredient  # noqa: F401
-from app.models.menu import MenuItem  # noqa: F401
+from app.models.menu import MenuItem, MenuAvailabilityEvent, MenuAvailabilityStatus  # noqa: F401
 from app.models.recipe import Recipe, RecipeVersion, RecipeIngredient, MenuItemRecipe  # noqa: F401,E501
-from app.models.equipment import EquipmentItem, EquipmentStatus  # noqa: F401
+from app.models.equipment import (  # noqa: F401
+    EquipmentItem,
+    EquipmentStatus,
+    EquipmentIssue,
+    EquipmentIssuePriority,
+    EquipmentIssueStatus,
+)
 from app.models.roster import Shift, ShiftStatus, StaffResponse, StaffResponseStatus, StaffLink  # noqa: F401,E501
 from app.models.attendance import AttendanceEvent, AttendanceStatus, AttendanceSource  # noqa: F401
 from app.models.prep import PrepTemplate, PrepTemplateItem, PrepTask, PrepTaskStatus  # noqa: F401
@@ -28,6 +34,12 @@ from app.models.purchase_order import (  # noqa: F401
     PurchaseOrder,
     PurchaseOrderLine,
     PurchaseOrderStatus,
+)
+from app.models.capture import (  # noqa: F401
+    Capture,
+    CaptureStatus,
+    CaptureType,
+    MatchedEntityType,
 )
 from app.models.audit import AuditEvent  # noqa: F401
 
@@ -51,8 +63,13 @@ __all__ = [
     "RecipeVersion",
     "RecipeIngredient",
     "MenuItemRecipe",
+    "MenuAvailabilityEvent",
+    "MenuAvailabilityStatus",
     "EquipmentItem",
     "EquipmentStatus",
+    "EquipmentIssue",
+    "EquipmentIssuePriority",
+    "EquipmentIssueStatus",
     "Shift",
     "ShiftStatus",
     "StaffResponse",
@@ -71,5 +88,9 @@ __all__ = [
     "DeliveryStatus",
     "DeliveryIssue",
     "DeliveryIssueType",
+    "Capture",
+    "CaptureStatus",
+    "CaptureType",
+    "MatchedEntityType",
     "AuditEvent",
 ]
