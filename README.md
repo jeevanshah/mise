@@ -37,7 +37,16 @@ The service-period question (lunch/dinner/events as a separate `ServicePeriod` v
 - `GET /venues/{id}/shifts/{id}/attendance` (derived current) and `.../attendance-events` (full history) — any Membership can read.
 - No GPS/biometric/location field anywhere on `AttendanceEvent` — verified by a test that walks the model's columns, not just left out by omission.
 
-## Epic 4 (Prep Plan) is next per the locked build order.
+## Epic 4 — Prep Plan
+
+`app/services/prep_service.py` + `app/api/routes/prep.py`. Depends only on Epic 1 (not Epic 2) — a PrepTask is keyed to a `ServiceDay`, not a `Shift`.
+
+- `PrepTemplate` + `PrepTemplateItem` — a reusable, ordered `{station, item, quantity, priority}` list. Applying a template (`POST /venues/{id}/service-days/{business_date}/prep-tasks/apply-template`) **copies** each item's fields onto a fresh `PrepTask` — nothing references the template live, so editing a task afterwards never touches the template and vice versa.
+- `PrepTask.status` (`not_started`/`in_progress`/`done`/`blocked`) is updated only by **Head Chef or Sous Chef** — a new, narrower `PREP_EXECUTION_ROLES` constant (`app/api/deps.py`), deliberately different from `MANAGEMENT_ROLES`: this is kitchen-floor execution, not venue configuration, and the locked AC names exactly those two roles.
+- **Carry forward** (`POST .../prep-tasks/carry-forward`) creates next-day `PrepTask`s from anything not `done`, marks the originals "carried" by setting `carried_to_task_id` (there's no separate status value for it), and is idempotent — re-running it for the same pair of days does nothing the second time, so the chain only ever extends one hop at a time and never branches or duplicates. `carry_count` is the "day-count badge," climbing by exactly one per hop.
+- Printable list (`GET .../prep-tasks/printable`) is a deliberately narrower schema — station name, item, quantity, unit, priority, status — with none of the internal bookkeeping fields (`template_item_id`, `carried_*_task_id`) a chef-only admin view would show.
+
+## Epic 5 (Supplier Orders) is next per the locked build order.
 
 ## Local setup
 
@@ -55,7 +64,7 @@ Tests run against a **separate** database (`mise_test` by default — see `tests
 
 ```bash
 createdb mise_test   # once, locally — CI does this via the postgres service container
-pytest tests/ -v     # 136 tests
+pytest tests/ -v     # 149 tests
 ```
 
 ## Design notes worth knowing before extending this

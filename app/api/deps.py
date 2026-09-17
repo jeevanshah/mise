@@ -42,6 +42,13 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 # it. Reused across Epic 1 steps 6-7 rather than redefined per router.
 MANAGEMENT_ROLES = (MembershipRole.owner, MembershipRole.ops_manager, MembershipRole.head_chef)
 
+# Kitchen-floor execution, not business configuration — the locked Epic 4
+# AC names exactly these two roles for changing a PrepTask's status
+# ("Head Chef/Sous Chef only"), deliberately narrower than MANAGEMENT_ROLES:
+# owner/ops_manager configure the venue but don't necessarily run the pass,
+# and line_staff execute against tasks without updating their status.
+PREP_EXECUTION_ROLES = (MembershipRole.head_chef, MembershipRole.sous_chef)
+
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),

@@ -20,6 +20,7 @@ from app.models.recipe import Recipe, RecipeVersion, RecipeIngredient, MenuItemR
 from app.models.equipment import EquipmentItem, EquipmentStatus  # noqa: F401
 from app.models.roster import Shift, ShiftStatus, StaffResponse, StaffResponseStatus, StaffLink  # noqa: F401,E501
 from app.models.attendance import AttendanceEvent, AttendanceStatus, AttendanceSource  # noqa: F401
+from app.models.prep import PrepTemplate, PrepTemplateItem, PrepTask, PrepTaskStatus  # noqa: F401
 from app.models.audit import AuditEvent  # noqa: F401
 
 __all__ = [
@@ -52,5 +53,9 @@ __all__ = [
     "AttendanceEvent",
     "AttendanceStatus",
     "AttendanceSource",
+    "PrepTemplate",
+    "PrepTemplateItem",
+    "PrepTask",
+    "PrepTaskStatus",
     "AuditEvent",
 ]
