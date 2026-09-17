@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import time
 
-from sqlalchemy import ForeignKey, String, Time
+from sqlalchemy import ForeignKey, String, Text, Time
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,3 +24,9 @@ class Supplier(UUIDPKMixin, TimestampMixin, Base):
     # "same days every week", which is all the known customer needs so far.
     order_days: Mapped[str | None] = mapped_column(String(40), nullable=True)
     cutoff_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    # Epic 9 — Kitchen Memory: free text (delivery quirks, account numbers,
+    # standing instructions, ...) a chef jots down for this supplier and
+    # can later find via full-text search. The one column this epic adds —
+    # its own AC is scoped to "no new TABLES", not "no schema changes at
+    # all", and there's no existing free-text field on Supplier to search.
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)

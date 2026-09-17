@@ -42,19 +42,39 @@ def create_supplier(
     contact_email: str | None = None,
     order_days: str | None = None,
     cutoff_time: time | None = None,
+    notes: str | None = None,
 ) -> Supplier:
     with audited_transaction(
         session, organisation_id=venue.organisation_id, venue_id=venue.id, actor_user_id=actor.id
     ) as audit:
         supplier = Supplier(
             venue_id=venue.id, name=name, contact_email=contact_email,
-            order_days=order_days, cutoff_time=cutoff_time,
+            order_days=order_days, cutoff_time=cutoff_time, notes=notes,
         )
         session.add(supplier)
         session.flush()
         audit.record(
             action="supplier.created", entity_type="supplier", entity_id=supplier.id,
             after={"name": supplier.name},
+        )
+    return supplier
+
+
+def update_supplier_notes(
+    session: Session, *, venue: Venue, actor: User, supplier: Supplier, notes: str | None
+) -> Supplier:
+    """Epic 9 — the only field on Supplier a chef edits after creation;
+    everything else here is set once at onboarding."""
+    with audited_transaction(
+        session, organisation_id=venue.organisation_id, venue_id=venue.id, actor_user_id=actor.id
+    ) as audit:
+        before_notes = supplier.notes
+        supplier.notes = notes
+        session.add(supplier)
+        session.flush()
+        audit.record(
+            action="supplier.notes_updated", entity_type="supplier", entity_id=supplier.id,
+            before={"notes": before_notes}, after={"notes": notes},
         )
     return supplier
 

@@ -13,6 +13,11 @@ class SupplierCreateRequest(BaseModel):
     contact_email: EmailStr | None = None
     order_days: str | None = None
     cutoff_time: time | None = None
+    notes: str | None = None
+
+
+class SupplierNotesUpdateRequest(BaseModel):
+    notes: str | None = None
 
 
 class SupplierOut(BaseModel):
@@ -22,6 +27,7 @@ class SupplierOut(BaseModel):
     contact_email: str | None
     order_days: str | None
     cutoff_time: time | None
+    notes: str | None
 
     model_config = {"from_attributes": True}
 

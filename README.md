@@ -1,6 +1,6 @@
 # Mise API
 
-Epics 1–8 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture, Handover, Chef Brief. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
+Epics 1–9 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture, Handover, Chef Brief, Kitchen Memory Interface. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
 
 ## What's built
 
@@ -87,6 +87,18 @@ The service-period question (lunch/dinner/events as a separate `ServicePeriod` v
 - **Approaching order cut-offs is the one genuinely new computation**: for each draft `PurchaseOrder` with at least one line (an empty draft has no cut-off anyone's waiting on), `compute_approaching_cutoffs` finds its `Supplier`'s next `order_days`/`cutoff_time` occurrence in the venue's own timezone and surfaces it if that's within `APPROACHING_CUTOFF_WINDOW` (24h — not spec-mandated beyond "approaching", chosen so a chef checking the Brief once at shift-start still has time to act). Suppliers with no `order_days`/`cutoff_time` configured are silently excluded — "approaching" isn't computable without them. Public and takes an explicit `as_of` (like `compute_coverage_warnings`), so it's deterministically testable instead of only through the real wall clock.
 - **Brief-opened events are logged unconditionally, every call, no dedup** (locked AC: "logged per ServiceDay per user" for weekly-active-use / brief-open-rate metrics) — a second open the same day is still a real, separate open for that metric; deduping here would make the very numbers this AC exists for undercount.
 
+## Epic 9 — Kitchen Memory Interface
+
+`app/services/kitchen_memory_service.py` + `app/api/routes/kitchen_memory.py`. New behaviour over existing Epic 1 skeleton entities (`Recipe`/`RecipeVersion`/`RecipeIngredient`/`MenuItemRecipe`, previously schema-only) plus one small addition to `Supplier`.
+
+- **A Recipe is never edited in place — "editing" always creates a new `RecipeVersion`.** `create_recipe_version` always writes at `current.version_no + 1` (or `1` for the first one); there's no update endpoint for an existing version's fields. "Current version" is always a derived read (`get_current_recipe_version` = highest `version_no`), the same reasoning as `ServiceDay.business_date` or attendance's "current status" elsewhere in this codebase — never a stored `is_current` flag that could drift. Old versions stay fully viewable via `GET .../recipes/{id}/versions` (oldest first, full ingredient lines and `prep_notes` intact) — verified live: a v1 with prep notes and one ingredient line, followed by a v2 with different notes and zero lines, leaves v1's own row completely untouched.
+- **RecipeVersion validates every ingredient line against the same venue** (`UnknownIngredientForRecipe`, 422) — accepting a cross-venue `ingredient_id` would be the same kind of tenancy leak Epic 1's `preferred_supplier_id` check already guards against. A version with zero ingredient lines is allowed (e.g. "Salt" needs no recipe card).
+- **MenuItem ↔ Recipe is many-to-many via `MenuItemRecipe`** (a burger can reference a bun recipe and a patty recipe separately) — `link_menu_item_recipe` rejects an exact duplicate pair as a 409 (`RecipeAlreadyLinkedToMenuItem`) rather than silently no-oping, matching this codebase's general "duplicate create is a 409" rule. `GET /venues/{id}/menu-items/{id}` is the locked "MenuItem detail view" AC — it returns every linked Recipe with its current version inline, not just ids to follow up on separately.
+- **EquipmentItem issue history** (`GET /venues/{id}/equipment-items/{id}/issues`) is the polished view Epic 1's own `EquipmentIssue` docstring already promised for this epic — full open+resolved history, newest first, nothing filtered out.
+- **The one schema change this epic makes**: a nullable `Supplier.notes: Text` column. The locked AC's own wording — "no new **tables** needed" — is read as deliberately narrower than "no schema changes at all," and full-text search explicitly has to span "Supplier notes" per the AC; no existing free-text field on `Supplier` could serve that purpose. `PATCH /venues/{id}/suppliers/{id}/notes` (`MANAGEMENT_ROLES`) is the only field on `Supplier` a chef edits after onboarding — everything else is set once at creation — and it's audited with full before/after (`supplier.notes_updated`).
+- **Full-text search across four surfaces, no new column or index**: `GET /venues/{id}/kitchen-memory/search?q=...` searches `Recipe.name`, `RecipeVersion.prep_notes`, `Supplier.notes`, `EquipmentIssue.resolution_notes`, and `Handover.note` — all scoped to the venue — using Postgres's native `to_tsvector('english', ...)` / `plainto_tsquery('english', ...)` computed inline at query time, consistent with Epic 6's own preference for "the simplest mechanism that's actually correct" over embeddings/ML. No new tsvector column, no new index, no new table — this is genuinely just a set of `WHERE` clauses. A blank/whitespace-only query short-circuits to `[]` before hitting the database. Verified live end to end for all five source fields, including confirming the search stays venue-scoped and a cross-tenant search 403s exactly like every other resource.
+- Reads (recipe list/detail/versions, menu item detail, equipment issue history, search) need any Membership; writes (create recipe, create a new version, link a recipe to a menu item, edit supplier notes) need `MANAGEMENT_ROLES`.
+
 ## Local setup
 
 ```bash
@@ -103,7 +115,7 @@ Tests run against a **separate** database (`mise_test` by default — see `tests
 
 ```bash
 createdb mise_test   # once, locally — CI does this via the postgres service container
-pytest tests/ -v     # 249 tests
+pytest tests/ -v     # 273 tests
 ```
 
 ## Design notes worth knowing before extending this

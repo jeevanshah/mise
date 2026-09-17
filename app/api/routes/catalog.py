@@ -14,6 +14,7 @@ from app.api.schemas.catalog import (
     MenuItemCreateRequest,
     MenuItemOut,
     SupplierCreateRequest,
+    SupplierNotesUpdateRequest,
     SupplierOut,
 )
 from app.core.database import get_session
@@ -30,6 +31,7 @@ from app.services.catalog_service import (
     create_ingredient,
     create_menu_item,
     create_supplier,
+    update_supplier_notes,
 )
 
 router = APIRouter(tags=["catalog"])
@@ -40,6 +42,13 @@ def _get_venue_or_404(session: Session, venue_id: uuid.UUID) -> Venue:
     if venue is None:  # pragma: no cover — require_membership's FK guarantees this
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Venue not found")
     return venue
+
+
+def _get_supplier_or_404(session: Session, venue_id: uuid.UUID, supplier_id: uuid.UUID) -> Supplier:
+    supplier = session.query(Supplier).filter_by(id=supplier_id, venue_id=venue_id).one_or_none()
+    if supplier is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    return supplier
 
 
 # --- Suppliers -----------------------------------------------------------
@@ -57,6 +66,7 @@ def create_supplier_route(
     return create_supplier(
         session, venue=venue, actor=current_user, name=body.name,
         contact_email=body.contact_email, order_days=body.order_days, cutoff_time=body.cutoff_time,
+        notes=body.notes,
     )
 
 
@@ -67,6 +77,20 @@ def list_suppliers(
     session: Session = Depends(get_session),
 ) -> list[SupplierOut]:
     return session.query(Supplier).filter_by(venue_id=venue_id).order_by(Supplier.name).all()
+
+
+@router.patch("/venues/{venue_id}/suppliers/{supplier_id}/notes", response_model=SupplierOut)
+def update_supplier_notes_route(
+    venue_id: uuid.UUID,
+    supplier_id: uuid.UUID,
+    body: SupplierNotesUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    membership: Membership = Depends(require_membership(*MANAGEMENT_ROLES)),  # noqa: ARG001
+    session: Session = Depends(get_session),
+) -> SupplierOut:
+    venue = _get_venue_or_404(session, venue_id)
+    supplier = _get_supplier_or_404(session, venue_id, supplier_id)
+    return update_supplier_notes(session, venue=venue, actor=current_user, supplier=supplier, notes=body.notes)
 
 
 # --- Ingredients -----------------------------------------------------------

@@ -8,6 +8,7 @@ from app.services.catalog_service import (
     create_ingredient,
     create_menu_item,
     create_supplier,
+    update_supplier_notes,
 )
 from app.services.onboarding_service import create_organisation_with_venue
 
@@ -67,3 +68,23 @@ def test_create_equipment_item_defaults_to_active(session):
 
     item = create_equipment_item(session, venue=venue, actor=owner, name="Walk-in Fridge")
     assert item.status == EquipmentStatus.active
+
+
+def test_create_supplier_with_notes(session):
+    owner, venue = _owner_and_venue(session)
+    supplier = create_supplier(
+        session, venue=venue, actor=owner, name="Farm Fresh", notes="Loading dock around the back, ring the bell",
+    )
+    assert supplier.notes == "Loading dock around the back, ring the bell"
+
+
+def test_update_supplier_notes_writes_before_and_after(session):
+    owner, venue = _owner_and_venue(session)
+    supplier = create_supplier(session, venue=venue, actor=owner, name="Farm Fresh", notes="Old note")
+
+    updated = update_supplier_notes(session, venue=venue, actor=owner, supplier=supplier, notes="New note")
+
+    assert updated.notes == "New note"
+    event = session.query(AuditEvent).filter_by(action="supplier.notes_updated").one()
+    assert event.before_data == {"notes": "Old note"}
+    assert event.after_data == {"notes": "New note"}
