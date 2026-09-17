@@ -21,6 +21,14 @@ from app.models.equipment import EquipmentItem, EquipmentStatus  # noqa: F401
 from app.models.roster import Shift, ShiftStatus, StaffResponse, StaffResponseStatus, StaffLink  # noqa: F401,E501
 from app.models.attendance import AttendanceEvent, AttendanceStatus, AttendanceSource  # noqa: F401
 from app.models.prep import PrepTemplate, PrepTemplateItem, PrepTask, PrepTaskStatus  # noqa: F401
+from app.models.purchase_order import (  # noqa: F401
+    DeliveryIssue,
+    DeliveryIssueType,
+    DeliveryStatus,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    PurchaseOrderStatus,
+)
 from app.models.audit import AuditEvent  # noqa: F401
 
 __all__ = [
@@ -57,5 +65,11 @@ __all__ = [
     "PrepTemplateItem",
     "PrepTask",
     "PrepTaskStatus",
+    "PurchaseOrder",
+    "PurchaseOrderLine",
+    "PurchaseOrderStatus",
+    "DeliveryStatus",
+    "DeliveryIssue",
+    "DeliveryIssueType",
     "AuditEvent",
 ]

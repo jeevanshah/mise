@@ -1,6 +1,6 @@
 # Mise API
 
-Epic 1 (Foundation, Onboarding & Audit) — **complete**, all 9 steps. Epic 2 (Kitchen Roster) — **complete**. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
+Epics 1–5 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
 
 ## What's built
 
@@ -46,7 +46,17 @@ The service-period question (lunch/dinner/events as a separate `ServicePeriod` v
 - **Carry forward** (`POST .../prep-tasks/carry-forward`) creates next-day `PrepTask`s from anything not `done`, marks the originals "carried" by setting `carried_to_task_id` (there's no separate status value for it), and is idempotent — re-running it for the same pair of days does nothing the second time, so the chain only ever extends one hop at a time and never branches or duplicates. `carry_count` is the "day-count badge," climbing by exactly one per hop.
 - Printable list (`GET .../prep-tasks/printable`) is a deliberately narrower schema — station name, item, quantity, unit, priority, status — with none of the internal bookkeeping fields (`template_item_id`, `carried_*_task_id`) a chef-only admin view would show.
 
-## Epic 5 (Supplier Orders) is next per the locked build order.
+## Epic 5 — Supplier Orders
+
+`app/services/supplier_order_service.py` + `app/api/routes/purchase_order.py`. Entities: `PurchaseOrder` (with the full send lifecycle), `PurchaseOrderLine`, `DeliveryIssue`.
+
+- **Open-draft identity** (locked AC): a draft `PurchaseOrder` is uniquely identified by `(venue, supplier, required_delivery_date/order_cycle, status=draft)` — never supplier alone, so an order for next Tuesday never silently merges into an unrelated Friday order for the same supplier. `add_or_merge_line` (`POST /venues/{id}/purchase-orders/lines`) is the single entry point for building one up: it finds-or-creates the matching draft, then either merges into an existing line for the same ingredient (summing quantities, audited before/after) or creates a new one — unit defaults from `Ingredient.ordering_unit` when not given. This is the exact function Quick Capture (Epic 6) calls directly at the service layer, per the locked build order note that Epic 5 moved ahead of Quick Capture for this reason. `PATCH .../lines/{line_id}` lets the chef correct a quantity after seeing a merge, but only while the order is still a draft (`CannotModifyNonDraftOrder` once it starts sending).
+- **Send lifecycle** (`POST .../purchase-orders/{id}/send`): `draft | send_failed → sending → sent | send_failed`. The `sending` transition is committed on its own, *before* the (stubbed) provider is called, so a crash or timeout mid-send leaves a durable `sending` record rather than reverting to `draft`. `idempotency_key` is generated once and reused on every retry — including a retry from `send_failed` — so a provider-side timeout can never produce two supplier emails for one order. A successful send records `sent_at`, `sent_by`, `provider_message_id`, and `recipient_snapshot` (a point-in-time copy of the address actually used — deliberately not a live pointer to `Supplier.contact_email`, which can change later). "Sent" only ever means the provider accepted the message, never that the supplier received or read it.
+- `EMAIL_PROVIDER` is a module-level, swappable hook (`supplier_order_service.py`) rather than a hardcoded call — Epic 10 (Operational Email Notifications) will replace the stub with its real pluggable `EmailSender` interface without touching `send_purchase_order`'s contract. Today the stub "sends" successfully whenever the supplier has a `contact_email` on file and raises `ProviderSendError` (→ `send_failed`) otherwise.
+- **Delivery** (`POST .../purchase-orders/{id}/delivery`) marks `received`/`partially_received`; a partial delivery requires at least one line-level note (`PartialDeliveryRequiresLineNote`, 422 otherwise) explaining what was short. `DeliveryIssue`s (`POST .../delivery-issues`) carry a typed `issue_type`, a stub `evidence` field (a URL/path string — no upload pipeline in v1), and a free-text `resolution`.
+- Every status transition — line created/merged/corrected, `sending`/`sent`/`send_failed`, delivery marked, issue logged — writes its own `AuditEvent` in the same `audited_transaction` as the mutation it records.
+
+## Epic 6 (Quick Capture) is next per the locked build order.
 
 ## Local setup
 
@@ -64,7 +74,7 @@ Tests run against a **separate** database (`mise_test` by default — see `tests
 
 ```bash
 createdb mise_test   # once, locally — CI does this via the postgres service container
-pytest tests/ -v     # 149 tests
+pytest tests/ -v     # 178 tests
 ```
 
 ## Design notes worth knowing before extending this
