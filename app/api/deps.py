@@ -35,6 +35,13 @@ from app.services.auth_service import InvalidAccessToken, decode_access_token
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
+# Shared role set for "back of house configuration" actions (stations, staff,
+# coverage rules, suppliers, ingredients, menu items, equipment) — owner and
+# ops_manager run the business, head_chef runs the kitchen; sous_chef and
+# line_staff execute against what those three set up, they don't configure
+# it. Reused across Epic 1 steps 6-7 rather than redefined per router.
+MANAGEMENT_ROLES = (MembershipRole.owner, MembershipRole.ops_manager, MembershipRole.head_chef)
+
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),

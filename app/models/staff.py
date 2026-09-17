@@ -4,7 +4,7 @@ import uuid
 
 from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.mixins import TimestampMixin, UUIDPKMixin
@@ -25,6 +25,8 @@ class Staff(UUIDPKMixin, TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
 
+    skills: Mapped[list["StaffSkill"]] = relationship(back_populates="staff")
+
 
 class StaffSkill(UUIDPKMixin, TimestampMixin, Base):
     """Staff x Station capability. A Shift can still be assigned without one
@@ -42,3 +44,5 @@ class StaffSkill(UUIDPKMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("stations.id"), nullable=False, index=True
     )
     trained: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    staff: Mapped["Staff"] = relationship(back_populates="skills")
