@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: mise
+      POSTGRES_PASSWORD: mise_dev_pw
+      POSTGRES_DB: mise_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - mise_pg_data:/var/lib/postgresql/data
+
+volumes:
+  mise_pg_data:

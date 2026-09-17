@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mise
+          POSTGRES_PASSWORD: mise_dev_pw
+          POSTGRES_DB: mise_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify migrations are reversible (up / down / up)
+        env:
+          DATABASE_URL: postgresql+psycopg2://mise:mise_dev_pw@localhost:5432/mise_test
+        run: |
+          PYTHONPATH=. alembic upgrade head
+          PYTHONPATH=. alembic downgrade base
+          PYTHONPATH=. alembic upgrade head
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql+psycopg2://mise:mise_dev_pw@localhost:5432/mise_test
+        run: PYTHONPATH=. python -m pytest tests/ -v
