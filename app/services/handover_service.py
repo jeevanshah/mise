@@ -39,6 +39,18 @@ class ServiceDayNotClosed(Exception):
     """reopen_service_day requires the day to actually be closed."""
 
 
+def get_open_equipment_issues(session: Session, *, venue: Venue) -> list[EquipmentIssue]:
+    """Venue-wide, not day-scoped — an EquipmentIssue doesn't belong to any
+    one ServiceDay. Shared by close_service_day (it's one of the six
+    handover categories) and the Epic 8 Chef Brief."""
+    return (
+        session.query(EquipmentIssue)
+        .join(EquipmentItem, EquipmentIssue.equipment_item_id == EquipmentItem.id)
+        .filter(EquipmentItem.venue_id == venue.id, EquipmentIssue.status == EquipmentIssueStatus.open)
+        .all()
+    )
+
+
 def _populate_handover_items(session: Session, *, venue: Venue, service_day: ServiceDay, handover: Handover) -> None:
     not_done_tasks = (
         session.query(PrepTask)
@@ -52,13 +64,7 @@ def _populate_handover_items(session: Session, *, venue: Venue, service_day: Ser
     for event in todays_events:
         session.add(HandoverItem(handover_id=handover.id, menu_availability_event_id=event.id))
 
-    open_equipment_issues = (
-        session.query(EquipmentIssue)
-        .join(EquipmentItem, EquipmentIssue.equipment_item_id == EquipmentItem.id)
-        .filter(EquipmentItem.venue_id == venue.id, EquipmentIssue.status == EquipmentIssueStatus.open)
-        .all()
-    )
-    for issue in open_equipment_issues:
+    for issue in get_open_equipment_issues(session, venue=venue):
         session.add(HandoverItem(handover_id=handover.id, equipment_issue_id=issue.id))
 
     # "Open" DeliveryIssue: no separate status column (Epic 5) — an

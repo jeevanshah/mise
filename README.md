@@ -1,6 +1,6 @@
 # Mise API
 
-Epics 1–7 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture, Handover. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
+Epics 1–8 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture, Handover, Chef Brief. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
 
 ## What's built
 
@@ -78,6 +78,15 @@ The service-period question (lunch/dinner/events as a separate `ServicePeriod` v
 - **Re-closing after a reopen updates the same `Handover` row** (unique on `service_day_id`) rather than accumulating a second one for the same day — its `HandoverItem`s are deleted and freshly repopulated, and `note`/`closed_by`/`closed_at`/`time_to_close_seconds` are all overwritten. Verified live: closing, reopening, adding a late-entry task, and re-closing returns the identical `Handover.id` with exactly the new item set.
 - All four actions (close/reopen/apply-template/decide-a-capture) need `MANAGEMENT_ROLES`, matching every other chef-level decision in this codebase; `GET .../handover` is readable by any Membership.
 
+## Epic 8 — Chef Brief
+
+`app/services/chef_brief_service.py` + `app/api/routes/chef_brief.py`. `GET /venues/{id}/chef-brief` (any Membership — kitchen-floor visibility, not management-only), defaulting to the current `ServiceDay` (locked AC: "default landing view"); pass `?business_date=` to look at a different day. No new tables — this epic is a read-only aggregation over Epics 2–7's own data plus one new `AuditEvent` action.
+
+- **This is a backend build — three locked ACs are front-end-only and are explicitly out of scope here**: the 390px "above the fold" phone layout, pairing color with an icon on every tile (never color alone), and "every tile links into its underlying module" (a link is a UI affordance). What this endpoint guarantees instead is that every section carries the ids a front end needs to build that link — a `shift_id` on each rostered-staff row, a `purchase_order_id` on each approaching cut-off, and so on.
+- **Eight sections, each reusing an existing derived-read or query rather than re-deriving anything**: rostered-vs-present staff (Epic 2's "scheduled" definition — draft or published, not cancelled — paired with Epic 3's `attendance_service.get_current_status`, the same latest-event-wins read used everywhere attendance is shown); coverage gaps (Epic 2's `compute_coverage_warnings`, called directly, not reimplemented); priority open PrepTasks (not-done, ordered by priority — Epic 4's own existing sort); open EquipmentIssues (Epic 7's `get_open_equipment_issues`, extracted from `handover_service.py` so both epics share one query instead of two copies); yesterday's Handover and today's carried-forward PrepTasks (Epic 7's own AC: "next ServiceDay's Chef Brief surfaces yesterday's Handover... automatically"); and unavailable/low MenuItems (the latest `MenuAvailabilityEvent` per item today, collapsed in Python the same way `get_current_status` collapses AttendanceEvents — no window-function query needed at this scale).
+- **Approaching order cut-offs is the one genuinely new computation**: for each draft `PurchaseOrder` with at least one line (an empty draft has no cut-off anyone's waiting on), `compute_approaching_cutoffs` finds its `Supplier`'s next `order_days`/`cutoff_time` occurrence in the venue's own timezone and surfaces it if that's within `APPROACHING_CUTOFF_WINDOW` (24h — not spec-mandated beyond "approaching", chosen so a chef checking the Brief once at shift-start still has time to act). Suppliers with no `order_days`/`cutoff_time` configured are silently excluded — "approaching" isn't computable without them. Public and takes an explicit `as_of` (like `compute_coverage_warnings`), so it's deterministically testable instead of only through the real wall clock.
+- **Brief-opened events are logged unconditionally, every call, no dedup** (locked AC: "logged per ServiceDay per user" for weekly-active-use / brief-open-rate metrics) — a second open the same day is still a real, separate open for that metric; deduping here would make the very numbers this AC exists for undercount.
+
 ## Local setup
 
 ```bash
@@ -94,7 +103,7 @@ Tests run against a **separate** database (`mise_test` by default — see `tests
 
 ```bash
 createdb mise_test   # once, locally — CI does this via the postgres service container
-pytest tests/ -v     # 230 tests
+pytest tests/ -v     # 249 tests
 ```
 
 ## Design notes worth knowing before extending this
