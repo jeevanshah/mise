@@ -48,6 +48,7 @@ class PrepTemplateDetailOut(PrepTemplateOut):
 
 class ApplyPrepTemplateRequest(BaseModel):
     template_id: uuid.UUID
+    added_after_close: bool = False
 
 
 class PrepTaskOut(BaseModel):
@@ -64,6 +65,7 @@ class PrepTaskOut(BaseModel):
     carried_from_task_id: uuid.UUID | None
     carried_to_task_id: uuid.UUID | None
     carry_count: int
+    added_after_close: bool
 
     model_config = {"from_attributes": True}
 

@@ -27,6 +27,7 @@ from app.services.capture_service import (
     create_capture,
     reject_capture,
 )
+from app.services.service_day_service import ServiceDayIsClosed
 
 router = APIRouter(tags=["quick-capture"])
 
@@ -56,7 +57,13 @@ def create_capture_route(
     """No mic/camera affordance here or anywhere else in Quick Capture —
     raw_text is free text the chef typed, full stop (locked AC)."""
     venue = _get_venue_or_404(session, venue_id)
-    return create_capture(session, venue=venue, actor=current_user, raw_text=body.raw_text)
+    try:
+        return create_capture(
+            session, venue=venue, actor=current_user, raw_text=body.raw_text,
+            business_date=body.business_date, added_after_close=body.added_after_close,
+        )
+    except ServiceDayIsClosed as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
 @router.get("/venues/{venue_id}/captures", response_model=list[CaptureOut])
@@ -103,7 +110,7 @@ def confirm_capture_route(
             availability_status=body.availability_status, quantity_remaining=body.quantity_remaining,
             priority=body.priority, photos=body.photos,
         )
-    except CaptureAlreadyDecided as exc:
+    except (CaptureAlreadyDecided, ServiceDayIsClosed) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except (UnresolvedCapture, UnknownMatchedEntity, MissingConfirmationDetails) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
@@ -129,5 +136,5 @@ def reject_capture_route(
     capture = _get_capture_or_404(session, venue_id, capture_id)
     try:
         return reject_capture(session, venue=venue, actor=current_user, capture=capture, reason=body.reason)
-    except CaptureAlreadyDecided as exc:
+    except (CaptureAlreadyDecided, ServiceDayIsClosed) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))

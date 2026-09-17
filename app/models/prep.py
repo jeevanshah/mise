@@ -4,7 +4,7 @@ import enum
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, Enum, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -100,3 +100,10 @@ class PrepTask(UUIDPKMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("prep_tasks.id"), nullable=True, index=True
     )
     carry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Epic 7 — set only when this task was created via the sanctioned "late
+    # entry" path against an already-CLOSED ServiceDay (see
+    # app/services/handover_service.py). A normal task created while the
+    # day is open/planned is always False — this is never a general
+    # "backdated" flag, only the one specific override the locked AC allows.
+    added_after_close: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

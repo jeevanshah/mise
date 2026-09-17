@@ -15,11 +15,12 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.models.prep import PrepTask, PrepTaskStatus, PrepTemplate, PrepTemplateItem
-from app.models.service_day import ServiceDay
+from app.models.service_day import ServiceDay, ServiceDayStatus
 from app.models.station import Station
 from app.models.user import User
 from app.models.venue import Venue
 from app.services.audit_service import audited_transaction
+from app.services.service_day_service import ServiceDayIsClosed
 
 
 def create_prep_template(session: Session, *, venue: Venue, actor: User, name: str) -> PrepTemplate:
@@ -72,11 +73,23 @@ def add_template_item(
 
 
 def apply_prep_template(
-    session: Session, *, venue: Venue, actor: User, template: PrepTemplate, service_day: ServiceDay
+    session: Session, *, venue: Venue, actor: User, template: PrepTemplate, service_day: ServiceDay,
+    added_after_close: bool = False,
 ) -> list[PrepTask]:
     """Creates one PrepTask per PrepTemplateItem (ordered by sort_order),
     with every working field COPIED — not referenced — from the template
-    item, so subsequent edits to either never touch the other."""
+    item, so subsequent edits to either never touch the other.
+
+    Epic 7: a closed ServiceDay's PrepTasks are read-only — this raises
+    ServiceDayIsClosed unless added_after_close=True, the one sanctioned
+    late-entry path (the flag is only ever actually stored True when the
+    day is genuinely closed; passing it against an open day is a no-op)."""
+    if service_day.status == ServiceDayStatus.closed and not added_after_close:
+        raise ServiceDayIsClosed(
+            f"ServiceDay {service_day.id} is closed — pass added_after_close=True for a sanctioned late entry"
+        )
+    effective_added_after_close = added_after_close and service_day.status == ServiceDayStatus.closed
+
     template_items = (
         session.query(PrepTemplateItem)
         .filter_by(template_id=template.id)
@@ -99,6 +112,7 @@ def apply_prep_template(
                 priority=template_item.priority,
                 status=PrepTaskStatus.not_started,
                 template_item_id=template_item.id,
+                added_after_close=effective_added_after_close,
             )
             session.add(task)
             session.flush()
@@ -107,7 +121,7 @@ def apply_prep_template(
                 after={
                     "station_id": str(task.station_id), "item": task.item,
                     "quantity": str(task.quantity), "unit": task.unit,
-                    "template_id": str(template.id),
+                    "template_id": str(template.id), "added_after_close": effective_added_after_close,
                 },
             )
             created.append(task)
@@ -117,6 +131,16 @@ def apply_prep_template(
 def update_prep_task_status(
     session: Session, *, venue: Venue, actor: User, task: PrepTask, status: PrepTaskStatus
 ) -> PrepTask:
+    """Epic 7: editing an EXISTING task on a closed ServiceDay is never
+    allowed, even via the late-entry path — "read-only" means edits are
+    always rejected until the day is explicitly reopened (unlike creating
+    a brand-new task, there's no sanctioned "edited after close" flag)."""
+    service_day = session.get(ServiceDay, task.service_day_id)
+    if service_day is not None and service_day.status == ServiceDayStatus.closed:
+        raise ServiceDayIsClosed(
+            f"ServiceDay {service_day.id} is closed — reopen it before changing an existing PrepTask"
+        )
+
     with audited_transaction(
         session, organisation_id=venue.organisation_id, venue_id=venue.id, actor_user_id=actor.id,
         service_day_id=task.service_day_id,

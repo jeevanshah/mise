@@ -27,11 +27,12 @@ from app.models.capture import Capture, CaptureStatus, CaptureType, MatchedEntit
 from app.models.equipment import EquipmentIssue, EquipmentIssuePriority, EquipmentItem
 from app.models.ingredient import Ingredient
 from app.models.menu import MenuAvailabilityEvent, MenuAvailabilityStatus, MenuItem
+from app.models.service_day import ServiceDay, ServiceDayStatus
 from app.models.user import User
 from app.models.venue import Venue
 from app.services.audit_service import audited_transaction
 from app.services.capture_classifier import ENTITY_TYPE_TO_CAPTURE_TYPE, classify_capture
-from app.services.service_day_service import get_or_create_service_day, resolve_business_date
+from app.services.service_day_service import ServiceDayIsClosed, get_or_create_service_day, resolve_business_date
 from app.services.supplier_order_service import (
     MissingOrderIdentity,
     UnknownIngredient,
@@ -62,9 +63,23 @@ class MissingConfirmationDetails(Exception):
     cycle to identify which draft PurchaseOrder to add the line to)."""
 
 
-def create_capture(session: Session, *, venue: Venue, actor: User, raw_text: str) -> Capture:
-    business_date = resolve_business_date(venue, datetime.now(timezone.utc))
-    service_day = get_or_create_service_day(session, venue=venue, business_date=business_date)
+def create_capture(
+    session: Session, *, venue: Venue, actor: User, raw_text: str,
+    business_date: date | None = None, added_after_close: bool = False,
+) -> Capture:
+    """business_date defaults to "today" (the normal case). Pass an
+    explicit (past, closed) business_date + added_after_close=True for the
+    Epic 7 sanctioned late-entry path — otherwise a Capture against a
+    closed ServiceDay is rejected (ServiceDayIsClosed)."""
+    resolved_date = business_date or resolve_business_date(venue, datetime.now(timezone.utc))
+    service_day = get_or_create_service_day(session, venue=venue, business_date=resolved_date)
+
+    if service_day.status == ServiceDayStatus.closed and not added_after_close:
+        raise ServiceDayIsClosed(
+            f"ServiceDay {service_day.id} is closed — pass added_after_close=True for a sanctioned late entry"
+        )
+    effective_added_after_close = added_after_close and service_day.status == ServiceDayStatus.closed
+
     result = classify_capture(session, venue=venue, raw_text=raw_text)
 
     with audited_transaction(
@@ -83,6 +98,7 @@ def create_capture(session: Session, *, venue: Venue, actor: User, raw_text: str
             confidence=result.confidence,
             candidate_matches=result.candidate_matches or None,
             status=CaptureStatus.proposed,
+            added_after_close=effective_added_after_close,
         )
         session.add(capture)
         session.flush()
@@ -94,6 +110,7 @@ def create_capture(session: Session, *, venue: Venue, actor: User, raw_text: str
                 "matched_entity_id": str(result.matched_entity_id) if result.matched_entity_id else None,
                 "extracted_quantity": str(result.extracted_quantity) if result.extracted_quantity else None,
                 "candidate_count": len(result.candidate_matches),
+                "added_after_close": effective_added_after_close,
             },
         )
     return capture
@@ -113,9 +130,22 @@ def _validate_matched_entity(
         )
 
 
+def _raise_if_service_day_closed(session: Session, service_day_id: uuid.UUID) -> None:
+    """Deciding on an existing Capture (confirm/reject) is an edit, not a
+    new addition — Epic 7's "read-only" applies unconditionally here, same
+    as prep_service.update_prep_task_status. No added_after_close override
+    exists for this path; reopen the day first."""
+    service_day = session.get(ServiceDay, service_day_id)
+    if service_day is not None and service_day.status == ServiceDayStatus.closed:
+        raise ServiceDayIsClosed(
+            f"ServiceDay {service_day.id} is closed — reopen it before deciding on an existing Capture"
+        )
+
+
 def reject_capture(session: Session, *, venue: Venue, actor: User, capture: Capture, reason: str | None = None) -> Capture:
     if capture.status != CaptureStatus.proposed:
         raise CaptureAlreadyDecided(f"Capture {capture.id} is already {capture.status.value}")
+    _raise_if_service_day_closed(session, capture.service_day_id)
 
     with audited_transaction(
         session, organisation_id=venue.organisation_id, venue_id=venue.id, actor_user_id=actor.id,
@@ -157,6 +187,7 @@ def confirm_capture(
 ):
     if capture.status != CaptureStatus.proposed:
         raise CaptureAlreadyDecided(f"Capture {capture.id} is already {capture.status.value}")
+    _raise_if_service_day_closed(session, capture.service_day_id)
 
     resolved_type = entity_type or capture.matched_entity_type
     resolved_id = entity_id or capture.matched_entity_id

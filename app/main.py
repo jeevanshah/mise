@@ -4,6 +4,7 @@ from app.api.routes.attendance import router as attendance_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.capture import router as capture_router
 from app.api.routes.catalog import router as catalog_router
+from app.api.routes.handover import router as handover_router
 from app.api.routes.onboarding import router as onboarding_router
 from app.api.routes.prep import router as prep_router
 from app.api.routes.purchase_order import router as purchase_order_router
@@ -24,6 +25,7 @@ app.include_router(attendance_router)
 app.include_router(prep_router)
 app.include_router(purchase_order_router)
 app.include_router(capture_router)
+app.include_router(handover_router)
 
 
 @app.get("/health")
@@ -34,5 +36,5 @@ def health() -> dict:
     return {"status": "ok", "environment": settings.environment}
 
 
-# Epics 1-6 are complete. Epic 7 (Handover) is next per the locked
+# Epics 1-7 are complete. Epic 8 (Chef Brief) is next per the locked
 # build order.

@@ -41,6 +41,7 @@ from app.models.capture import (  # noqa: F401
     CaptureType,
     MatchedEntityType,
 )
+from app.models.handover import Handover, HandoverItem  # noqa: F401
 from app.models.audit import AuditEvent  # noqa: F401
 
 __all__ = [
@@ -92,5 +93,7 @@ __all__ = [
     "CaptureStatus",
     "CaptureType",
     "MatchedEntityType",
+    "Handover",
+    "HandoverItem",
     "AuditEvent",
 ]

@@ -33,7 +33,7 @@ from app.services.prep_service import (
     create_prep_template,
     update_prep_task_status,
 )
-from app.services.service_day_service import get_or_create_service_day
+from app.services.service_day_service import ServiceDayIsClosed, get_or_create_service_day
 
 router = APIRouter(tags=["prep"])
 
@@ -149,7 +149,13 @@ def apply_template_route(
     venue = _get_venue_or_404(session, venue_id)
     template = _get_template_or_404(session, venue_id, body.template_id)
     service_day = get_or_create_service_day(session, venue=venue, business_date=business_date)
-    return apply_prep_template(session, venue=venue, actor=current_user, template=template, service_day=service_day)
+    try:
+        return apply_prep_template(
+            session, venue=venue, actor=current_user, template=template, service_day=service_day,
+            added_after_close=body.added_after_close,
+        )
+    except ServiceDayIsClosed as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
 @router.get(
@@ -212,7 +218,10 @@ def update_prep_task_status_route(
 ) -> PrepTaskOut:
     venue = _get_venue_or_404(session, venue_id)
     task = _get_task_or_404(session, venue_id, task_id)
-    return update_prep_task_status(session, venue=venue, actor=current_user, task=task, status=body.status)
+    try:
+        return update_prep_task_status(session, venue=venue, actor=current_user, task=task, status=body.status)
+    except ServiceDayIsClosed as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
 @router.post(

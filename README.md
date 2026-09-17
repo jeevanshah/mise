@@ -1,6 +1,6 @@
 # Mise API
 
-Epics 1–6 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
+Epics 1–7 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture, Handover. Locked Rev 4 spec. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
 
 ## What's built
 
@@ -67,7 +67,16 @@ The service-period question (lunch/dinner/events as a separate `ServicePeriod` v
 - Any Membership can create/list captures (kitchen-floor visibility); confirming or rejecting the resulting action needs `MANAGEMENT_ROLES`, matching the AC's "Chef" framing for the actual decision.
 - **No mic/camera affordance anywhere in Quick Capture** (locked AC) — `raw_text` is free text the chef typed, full stop. This is a backend build; there is no audio/image upload path to add one to.
 
-## Epic 7 (Handover) is next per the locked build order.
+## Epic 7 — Handover
+
+`app/services/handover_service.py` + `app/api/routes/handover.py`. New entities: `Handover`, `HandoverItem`. Also touches `prep_service.py`/`capture_service.py`/`service_day_service.py` to make a closed day genuinely read-only.
+
+- **Read-only after close, one sanctioned late-entry path** (locked AC): closing a `ServiceDay` (`POST /venues/{id}/service-days/{business_date}/close`) makes its `PrepTask`s and `Capture`s read-only. A brand-new row can still be added with an explicit `added_after_close=True` flag on the create call — the only sanctioned late entry — but **editing an existing row is unconditionally rejected**, with no override; the flag only ever means "created," never "edited." The one way back in is the explicit, audited **reopen** action (`POST .../reopen`, requires a `reason`). Both guards raise a shared `ServiceDayIsClosed` (`service_day_service.py`), mapped to `409` at the HTTP layer, and are enforced regardless of who's calling — there's no privileged role that bypasses it.
+- **Close is a single, measurable "open → save" event** (locked AC): `close_service_day` requires the day to actually be `open` (`ServiceDayNotOpen` otherwise, `409`), flips it to `closed`, and records `time_to_close_seconds` (`closed_at - opened_at`) **once, at close time** — not recomputed later — so a subsequent reopen/reclose cycle never muddles what any one close actually took.
+- **Handover auto-populates six categories** the closing chef should see, so nothing has to be manually re-entered: not-done `PrepTask`s, that day's `MenuAvailabilityEvent`s, currently-open `EquipmentIssue`s, currently-open `DeliveryIssue`s (no dedicated status column on that Epic 5 entity — "open" is simply "no resolution recorded yet"), draft/sent `PurchaseOrder`s, and unparsed `Capture`s. Toggling `included` (`PATCH /venues/{id}/handover-items/{item_id}/included`) only changes whether an item shows on the handover view — it never touches the record it points to, which is exactly why `HandoverItem` is its own row instead of a flag bolted onto each of those six tables.
+- **Polymorphic reference via six typed nullable FKs + a real DB `CHECK` constraint**, per the locked spec's own guidance ("pick the version that actually catches bugs at write time") rather than a generic `(item_type, item_id)` pair: `ck_handover_item_exactly_one_reference` sums `CASE WHEN ... IS NOT NULL` across all six columns and requires exactly 1. Verified directly against Postgres — a raw insert with zero or two references set fails at the database, not just in application code (`tests/test_handover_service.py`). `item_type`/`item_id` are derived properties, not stored columns, so they can't drift from whichever FK is actually set.
+- **Re-closing after a reopen updates the same `Handover` row** (unique on `service_day_id`) rather than accumulating a second one for the same day — its `HandoverItem`s are deleted and freshly repopulated, and `note`/`closed_by`/`closed_at`/`time_to_close_seconds` are all overwritten. Verified live: closing, reopening, adding a late-entry task, and re-closing returns the identical `Handover.id` with exactly the new item set.
+- All four actions (close/reopen/apply-template/decide-a-capture) need `MANAGEMENT_ROLES`, matching every other chef-level decision in this codebase; `GET .../handover` is readable by any Membership.
 
 ## Local setup
 
@@ -85,7 +94,7 @@ Tests run against a **separate** database (`mise_test` by default — see `tests
 
 ```bash
 createdb mise_test   # once, locally — CI does this via the postgres service container
-pytest tests/ -v     # 206 tests
+pytest tests/ -v     # 230 tests
 ```
 
 ## Design notes worth knowing before extending this

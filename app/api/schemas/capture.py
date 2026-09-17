@@ -13,6 +13,10 @@ from app.models.menu import MenuAvailabilityStatus
 
 class CreateCaptureRequest(BaseModel):
     raw_text: str
+    # Normally omitted (defaults to "today"). Pass both fields together for
+    # the Epic 7 sanctioned late-entry path against a closed ServiceDay.
+    business_date: date | None = None
+    added_after_close: bool = False
 
 
 class CaptureOut(BaseModel):
@@ -30,6 +34,7 @@ class CaptureOut(BaseModel):
     status: CaptureStatus
     decided_by: uuid.UUID | None
     decided_at: datetime | None
+    added_after_close: bool
 
     model_config = {"from_attributes": True}
 

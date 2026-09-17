@@ -29,6 +29,15 @@ class CannotOpenClosedServiceDay(Exception):
     effect of calling this again."""
 
 
+class ServiceDayIsClosed(Exception):
+    """A closed ServiceDay's PrepTasks/Captures are read-only (Epic 7
+    locked AC). New rows can still be added via the sanctioned
+    "added after close" late-entry path (app/services/prep_service.py,
+    app/services/capture_service.py); everything else — new tasks/captures
+    without that flag, and any edit to an existing one — is rejected until
+    the day is explicitly reopened (app/services/handover_service.py)."""
+
+
 def resolve_business_date(venue: Venue, at: datetime | None = None) -> date:
     """business_date is NOT the calendar date. Hours before
     Venue.business_day_boundary belong to the PRIOR business date — e.g. a
