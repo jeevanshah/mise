@@ -2,6 +2,8 @@
 
 Epics 1–11 — **complete**: Foundation/Onboarding/Audit (all 9 steps), Kitchen Roster, Attendance & Coverage, Prep Plan, Supplier Orders, Quick Capture, Handover, Chef Brief, Kitchen Memory Interface, Operational Email Notifications, Hardening & Pilot Prep. Locked Rev 4 spec — this is the last epic in the locked build order. FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL.
 
+A mobile-first React PWA built against this API lives in `frontend/` (full UI parity with all 11 epics) — see `frontend/README.md`.
+
 ## What's built
 
 - **Step 1 — Repository, CI, environments:** this scaffold, `docker-compose.yml` for local Postgres, `.github/workflows/ci.yml` (spins up Postgres, verifies migrations are reversible, runs the test suite).
@@ -145,7 +147,7 @@ Tests run against a **separate** database (`mise_test` by default — see `tests
 
 ```bash
 createdb mise_test   # once, locally — CI does this via the postgres service container
-pytest tests/ -v     # 326 tests
+pytest tests/ -v     # 329 tests
 ```
 
 ## Design notes worth knowing before extending this
@@ -162,4 +164,5 @@ pytest tests/ -v     # 326 tests
 - **`MANAGEMENT_ROLES`** (`app/api/deps.py`: owner, ops_manager, head_chef) gates every "configure the venue" action (stations, staff, coverage rules, suppliers, ingredients, menu items, equipment, shifts/roster). sous_chef/line_staff can read but not configure. Reuse this constant rather than redefining the role set per router.
 - **A duplicate create is a 409, never a silent update.** StaffSkill, StationCoverageRule, and inviting an existing Membership all follow this — see each service module's `Duplicate*` exception classes.
 - **A signed `StaffLink` is scoped to exactly one Shift**, not "all of this Staff member's shifts" — each publish issues its own link, the same way Epic 3's check-in links will. That's what makes "invalidated automatically if the underlying Shift is cancelled" a precise, live-checked rule (see `roster_service.resolve_staff_link`) rather than a cached flag.
+- **CORS is explicit, not wildcard.** `app/main.py` adds `CORSMiddleware` allow-listed from `Settings.cors_allow_origins` (`app/core/config.py`, comma-separated, defaults to the frontend's own dev-server origins). A new deployment origin (a built frontend served from a real host/CDN) needs adding here — same "fail loudly in production" pattern as `jwt_secret`: a wildcard in `ENVIRONMENT=production` refuses to start rather than silently defeating `allow_credentials`.
 - **`Shift.start_at`/`end_at` are timezone-aware instants, not a (date, time-of-day) pair.** A dinner shift can run 18:00–01:00; overlap checks and coverage-window comparisons all work in absolute instant arithmetic, converting to the venue's local timezone only where the locked spec's rules are actually stated in local time (coverage windows, "copy last week"'s wall-clock preservation).
